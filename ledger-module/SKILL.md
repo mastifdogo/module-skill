@@ -62,7 +62,9 @@ feature the module uses (the context file says which version added what;
   user's current one, so no organization columns. Background jobs that touch
   the books loop over `ctx.orgs.forEach`, or they only see the main books.
 - Configuration goes in the manifest's `settings.fields` (Ledger draws the
-  form under Settings → <module>); secrets as `secret` fields.
+  form under Settings → <module>); secrets as `secret` fields. Each
+  organization has its own values (Ledger ≥ 0.11.1): call
+  `ctx.settings.get()` where they're used instead of caching one copy.
 - Bad input answers 4xx (`throw new ctx.HttpError(422, "…")`), never 500.
 - Data shown in the UI goes in with `textContent`, never `innerHTML`; support
   dark mode and narrow panes (~260 px).
