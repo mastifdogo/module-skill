@@ -52,6 +52,16 @@ feature the module uses (the context file says which version added what;
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
   no API keys, OAuth, IMAP or Apps Script bridges of the module's own for
   those. An admin allows the module under Settings → AI / Gmail.
+- AI only proposes; a person approves: anything an LLM decides
+  (`ctx.llm` output) must be approved by a human before it takes effect:
+  posting or reversing entries, sending mail, changing or deleting records,
+  marking files done, calling outside services. Save the AI's result as a
+  pending suggestion (in the module's own table, with what it would do and
+  why), show it in the UI, and act only when a user with the right role
+  approves it (a POST from the UI, attributed with `req.user`); let them edit
+  or reject it. A dashboard to-do ("5 suggestions to review") is a good
+  pointer. Never act on AI output from a background job or `onReceive`
+  without that approval, and never offer an "auto-approve" setting.
 - Files another module produces (statements, bills, receipts, transaction
   lists) come through `ctx.files` (Ledger ≥ 0.11.0), never by reading the
   other module's tables: the receiver declares `"files": {"accepts": [...]}`
