@@ -51,7 +51,14 @@ feature the module uses (the context file says which version added what;
   `ctx.ledger.createJournalEntry(entry, req.user)`.
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
   no API keys, OAuth, IMAP or Apps Script bridges of the module's own for
-  those. An admin allows the module under Settings → AI / Gmail.
+  those. An admin allows the module under Settings → LLM API / Gmail.
+  Pictures go in `images: [{ media_type, data }]` (Ledger ≥ 0.11.2) and
+  reach the LLM connection set up for images (often a different model than
+  for text); check `ctx.llm.status().images.configured`.
+- Link each journal entry a module posts to the record it came from
+  (`links: [{ ref, label, href }]` on `createJournalEntry`, or
+  `ctx.ledger.linkJournalEntry`; Ledger ≥ 0.11.2) and find a record's
+  entries with `ctx.ledger.linkedEntries(ref)`.
 - AI only proposes; a person approves: anything an LLM decides
   (`ctx.llm` output) must be approved by a human before it takes effect:
   posting or reversing entries, sending mail, changing or deleting records,
