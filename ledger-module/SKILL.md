@@ -28,8 +28,8 @@ repository.
   (`scripts/check.sh` in this skill does this for you).
 - Read **`<ledger>/docs/MODULE_LLM_CONTEXT.md`** in full before writing
   anything: manifest, `ctx` API and return shapes, `ctx.settings`,
-  `ctx.dashboard`, `ctx.llm`, `ctx.gmail`, `ctx.search`, roles, migrations,
-  UI and security rules.
+  `ctx.dashboard`, `ctx.llm`, `ctx.gmail`, `ctx.search`, `ctx.files`,
+  `ctx.orgs`, roles, migrations, UI and security rules.
 - Then follow **`<ledger>/.claude/skills/ledger-module/SKILL.md`** (design,
   implementation rules, checks, publishing). Where the docs and Ledger's code
   disagree, the code wins (`backend/src/module-host.ts`, `modules.ts`,
@@ -52,6 +52,15 @@ feature the module uses (the context file says which version added what;
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
   no API keys, OAuth, IMAP or Apps Script bridges of the module's own for
   those. An admin allows the module under Settings → AI / Gmail.
+- Files another module produces (statements, bills, receipts, transaction
+  lists) come through `ctx.files` (Ledger ≥ 0.11.0), never by reading the
+  other module's tables: the receiver declares `"files": {"accepts": [...]}`
+  and marks each file `done` or `rejected` with a `result`; the sender picks
+  from `ctx.files.targets(kind)`.
+- Organizations (Ledger ≥ 0.11.0): each organization's books, and the
+  module's schema, are a separate database, and requests already run in the
+  user's current one, so no organization columns. Background jobs that touch
+  the books loop over `ctx.orgs.forEach`, or they only see the main books.
 - Configuration goes in the manifest's `settings.fields` (Ledger draws the
   form under Settings → <module>); secrets as `secret` fields.
 - Bad input answers 4xx (`throw new ctx.HttpError(422, "…")`), never 500.
