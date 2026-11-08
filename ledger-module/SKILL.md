@@ -95,9 +95,18 @@ needs a change in Ledger (a bug fix, a new `ctx` feature, a docs or checker
 fix), make it in a local Ledger checkout, tell the user what it is and why,
 and leave pushing it to them. The module must work without that change.
 
-1. Bump `version` in `ledger-module.json` (and note the change in the README).
+1. Bump `version` in `ledger-module.json` by the rule below (and note the
+   change in the README).
 2. Commit, tag `v<version>`, push the tag, and create a GitHub Release from
    it (not a draft or pre-release). If tags or releases can't be created from
    this session, tell the user which commit to release in GitHub's web UI.
 3. Ledger installs it on its update schedule or with "Update modules now"
    (Settings → Modules). New modules: Settings → Modules → enter `owner/repo`.
+
+**Version numbers** (`x.y.z`, for modules and for Ledger itself):
+
+- New features (a new page, route, setting, `ctx` capability, data the module
+  keeps): raise the middle number and reset the last, e.g. `1.4.2` → `1.5.0`.
+- Small tweaks and bug fixes only: raise the last number, e.g. `1.4.2` →
+  `1.4.3`.
+- A release that has both counts as a feature release.
