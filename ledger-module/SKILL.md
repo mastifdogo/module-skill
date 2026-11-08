@@ -112,11 +112,24 @@ needs a change in Ledger (a bug fix, a new `ctx` feature, a docs or checker
 fix), make it in a local Ledger checkout, tell the user what it is and why,
 and leave pushing it to them. The module must work without that change.
 
+Every module repository has the release workflow
+**`.github/workflows/release.yml`**: copy it from this skill's
+`assets/release.yml` (Ledger's template includes it too) into any module
+that lacks it. On each push to `main` that changes `ledger-module.json`, it
+creates the tag `v<version>` on that commit and a GitHub Release with
+generated notes, if that version has no Release yet, using GitHub's built-in
+token (no secrets). It skips versions already released and fails on a
+version that isn't `x.y.z`.
+
 1. Bump `version` in `ledger-module.json` by the rule below (and note the
    change in the README).
-2. Commit, tag `v<version>`, push the tag, and create a GitHub Release from
-   it (not a draft or pre-release). If tags or releases can't be created from
-   this session, tell the user which commit to release in GitHub's web UI.
+2. Commit and push `main`. **Don't create tags or Releases by hand**; the
+   workflow does it. Check the run in the Actions tab (or
+   `gh run list --workflow release.yml`). If it fails with "Resource not
+   accessible by integration", the user must allow it once: repository
+   Settings → Actions → General → Workflow permissions → "Read and write
+   permissions". Actions → Release → Run workflow re-runs it without a
+   change.
 3. Ledger installs it on its update schedule or with "Update modules now"
    (Settings → Modules). New modules: Settings → Modules → enter `owner/repo`.
 

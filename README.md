@@ -9,6 +9,8 @@ the module API reference, the template and the checker.
 ledger-module/
   SKILL.md           what Claude follows
   scripts/check.sh   runs Ledger's module checker on a module folder
+  assets/release.yml the GitHub Actions workflow every module repo carries:
+                     pushing a new version to main tags and releases it
 ledger-module-skill.zip   the same folder, ready to upload
 ```
 
