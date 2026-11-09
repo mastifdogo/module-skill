@@ -85,6 +85,12 @@ feature the module uses (the context file says which version added what;
 - Bad input answers 4xx (`throw new ctx.HttpError(422, "…")`), never 500.
 - Data shown in the UI goes in with `textContent`, never `innerHTML`; support
   dark mode and narrow panes (~260 px).
+- Account dropdowns (categorizing transactions, picking accounts) end with
+  "+ New account…": post `{ type: "ledger-new-account", id, defaults }` to
+  `parent` and Ledger opens its New account dialog over the page, keeping
+  everything the user filled in, then answers with
+  `{ type: "ledger-new-account-result", id, account }` (Ledger ≥ 0.11.3;
+  snippet in `MODULE_LLM_CONTEXT.md`). Select the new account when it arrives.
 
 ## 3. Check before saying it works
 
