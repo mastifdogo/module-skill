@@ -73,7 +73,9 @@ feature the module uses (the context file says which version added what;
   lists) come through `ctx.files` (Ledger ≥ 0.11.0), never by reading the
   other module's tables: the receiver declares `"files": {"accepts": [...]}`
   and marks each file `done` or `rejected` with a `result`; the sender picks
-  from `ctx.files.targets(kind)`.
+  from `ctx.files.targets(kind)`. Modules that keep customers or vendors
+  accept `customer` / `vendor` lists (Ledger ≥ 0.12.0): Ledger's "Migrate
+  from other software" sends them there for the user to review and approve.
 - Organizations (Ledger ≥ 0.11.0): each organization's books, and the
   module's schema, are a separate database, and requests already run in the
   user's current one, so no organization columns. Background jobs that touch
