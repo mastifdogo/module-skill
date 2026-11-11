@@ -46,6 +46,9 @@ feature the module uses (the context file says which version added what;
 
 - No npm packages at runtime: Ledger installs the release as-is. Only
   `node:*` built-ins, global `fetch`, and the module's own files.
+- Ledger runs in a Debian 12 container (the only template its releases
+  build; no Ubuntu): don't spawn programs that aren't in it or rely on
+  Ubuntu-specific paths or packages.
 - Never edit a released migration; add the next `NNN_name.sql`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
