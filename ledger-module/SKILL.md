@@ -138,8 +138,9 @@ version that isn't `x.y.z`.
    Settings → Actions → General → Workflow permissions → "Read and write
    permissions". Actions → Release → Run workflow re-runs it without a
    change.
-3. Ledger installs it on its update schedule or with "Update modules now"
-   (Settings → Modules). New modules: Settings → Modules → enter `owner/repo`.
+3. Ledger installs it on its update schedule, with "Update modules now"
+   (Settings → Modules), or when the server starts if "Update when the
+   server starts" is on (Settings → Updates, Ledger ≥ 0.12.1). New modules: Settings → Modules → enter `owner/repo`.
 
 **Version numbers** (`x.y.z`, for modules and for Ledger itself):
 
