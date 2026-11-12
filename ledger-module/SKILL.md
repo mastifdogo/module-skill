@@ -50,7 +50,7 @@ feature the module uses (the context file says which version added what;
   build; no Ubuntu): don't spawn programs that aren't in it or rely on
   Ubuntu-specific paths or packages.
 - Never edit a released migration; add the next `NNN_name.sql`.
-- Backups save each module table as a readable CSV beside the dump (Ledger ≥
+- Backups save each module table as a readable CSV in each backup's folder (next to the dump) (Ledger ≥
   0.13.0): clear table and column names, and no secrets in tables (use
   `secret` settings fields). Binary (`bytea`) columns show only their size
   in that CSV (Ledger ≥ 0.13.1), so keep a file's name, type, size and dates
