@@ -50,6 +50,9 @@ feature the module uses (the context file says which version added what;
   build; no Ubuntu): don't spawn programs that aren't in it or rely on
   Ubuntu-specific paths or packages.
 - Never edit a released migration; add the next `NNN_name.sql`.
+- Backups save each module table as a readable CSV beside the dump (Ledger ≥
+  0.13.0): clear table and column names, and no secrets in tables (use
+  `secret` settings fields).
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
