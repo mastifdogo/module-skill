@@ -29,7 +29,7 @@ repository.
 - Read **`<ledger>/docs/MODULE_LLM_CONTEXT.md`** in full before writing
   anything: manifest, `ctx` API and return shapes, `ctx.settings`,
   `ctx.dashboard`, `ctx.llm`, `ctx.gmail`, `ctx.search`, `ctx.files`,
-  `ctx.orgs`, roles, migrations, UI and security rules.
+  `ctx.storage`, `ctx.imports`, `ctx.orgs`, roles, migrations, UI and security rules.
 - Then follow **`<ledger>/.claude/skills/ledger-module/SKILL.md`** (design,
   implementation rules, checks, publishing). Where the docs and Ledger's code
   disagree, the code wins (`backend/src/module-host.ts`, `modules.ts`,
@@ -55,6 +55,19 @@ feature the module uses (the context file says which version added what;
   `secret` settings fields). Binary (`bytea`) columns show only their size
   in that CSV (Ledger ≥ 0.13.1), so keep a file's name, type, size and dates
   in readable columns beside its bytes.
+- Documents the module keeps (generated PDFs, scans, attachments) go in
+  `ctx.storage` (Ledger ≥ 0.13.2): `put(path, buffer)`, `get`, `list`,
+  `remove`, `url(path)` for links/iframes. Files sit on the data share per
+  organization and module and every backup folder carries them under
+  `files/<module>/`. Prefer it over `bytea` columns.
+- Records people have elsewhere (customers, products, employees) get an
+  Import from CSV card on the module's Settings page with
+  `ctx.imports.provide({ label, description, fields, handler })` (Ledger ≥
+  0.13.2). Ledger matches the file's columns (by name or with the AI),
+  converts values (money → cents, date → YYYY-MM-DD, boolean) and calls
+  `handler(rows, { dryRun: true, user })` for the preview (change nothing;
+  returned `errors` block the import), then `dryRun: false` only after the
+  user presses Import. Return `{ summary, errors }`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
