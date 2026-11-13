@@ -60,6 +60,17 @@ feature the module uses (the context file says which version added what;
   `remove`, `url(path)` for links/iframes. Files sit on the data share per
   organization and module and every backup folder carries them under
   `files/<module>/`. Prefer it over `bytea` columns.
+- **Restores** (Ledger 0.14.0): each organization backs up and restores its
+  own books. A restore replaces the module's tables and its `ctx.storage`
+  files with the backup's (a restore from an uploaded dump file, 0.14.2,
+  replaces only the tables), but keeps the module's current settings, which
+  are backed up and restored separately, and the server's users. So after a
+  restore, rows may be older than the settings and than files or state
+  outside the database: never assume a stored file, a setting or an
+  external record (a sent email, a remote id) matches the tables; check and
+  handle a missing one. Keep nothing in memory across requests that must
+  match the database (Ledger restarts after a restore), and refer to users
+  by `req.user` ids, which a restore never changes.
 - Records people have elsewhere (customers, products, employees) get an
   Import from CSV card on the module's Settings page with
   `ctx.imports.provide({ label, description, fields, handler })` (Ledger ≥
