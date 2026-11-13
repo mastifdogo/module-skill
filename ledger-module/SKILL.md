@@ -17,6 +17,34 @@ mastifdogo/download_module (with a browser extension). If the module's own
 repository has `.claude/skills/ledger-module/SKILL.md`, follow that too: it
 describes that module.
 
+## When the skill is invoked with no instruction
+
+If the user just tags or runs this skill and says nothing else, the job is:
+**bring this module up to date with the current Ledger and push it.**
+
+1. Work on the module in the repository you are in (the one with
+   `ledger-module.json`). If you are not in a module's repository, ask
+   which module.
+2. Get the current Ledger and read its module API (below), then compare the
+   module against it and against the rules in this skill: newer `ctx`
+   features it should use (for example the shared entity list instead of
+   its own customer or vendor table, account tags, sub-accounts,
+   `ctx.storage`, `ctx.imports`), things Ledger now does differently, and
+   anything the checker reports.
+3. Make those changes, raise `"ledger"` in the manifest to the oldest
+   Ledger version that has everything the module now uses, and bump the
+   module's `version` (a new feature raises the middle number, a fix or
+   small tweak the last).
+4. Run the checks (below). Don't push anything that fails them.
+5. Commit and **push to `main` of that module's repository**. Its release
+   workflow tags and publishes the new version by itself.
+6. Say what changed, the new version, and anything you chose not to change
+   and why. If nothing needed changing, say so and push nothing.
+
+Changes that alter or move the user's data (a migration that moves
+customers into the shared entity list, for example) still need the user's
+approval inside the module, as always.
+
 ## 1. Get Ledger and read the module API
 
 The API reference, template, checker and full workflow live in Ledger's
