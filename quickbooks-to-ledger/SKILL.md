@@ -1,6 +1,6 @@
 ---
 name: quickbooks-to-ledger
-description: Turn QuickBooks exports (a Journal report as CSV or Excel, an Account List, customer, invoice and bill lists, or a Desktop .IIF file) into a Ledger database dump (ledger.dump) that can be restored in Ledger, the self-hosted bookkeeping app (mastifdogo/Bookeeping), including the data of Ledger's modules (Sales customers and invoices, Auto sort bills). Use when someone uploads QuickBooks files and asks to move, migrate, convert or import their books into Ledger, or asks for a Ledger dump or backup file made from QuickBooks data.
+description: Turn QuickBooks exports (a Journal report as CSV or Excel, an Account List, customer, vendor, invoice and bill lists, or a Desktop .IIF file) into a Ledger database dump (ledger.dump) that can be restored in Ledger, the self-hosted bookkeeping app (mastifdogo/Bookeeping), including the data of Ledger's modules (Sales customers and invoices, Auto sort bills). Use when someone uploads QuickBooks files and asks to move, migrate, convert or import their books into Ledger, or asks for a Ledger dump or backup file made from QuickBooks data.
 ---
 
 # QuickBooks to a Ledger dump
@@ -22,6 +22,10 @@ Paths below are relative to this skill's folder.
 - **The chart of accounts** (strongly recommended, it carries each account's
   type): Online: Settings ⚙ → Chart of accounts → Run report → export
   (the "Account List"). An IIF file already has it.
+- **Customers and vendors** (recommended): Reports → **Customer Contact
+  List** and **Vendor Contact List**. They fill Ledger's own list of
+  entities (each a customer, a vendor, or both), and let the converter tell
+  who each transaction is with.
 - **For Ledger's modules** (ask which modules they use; skip what they
   don't have installed):
   - *Sales module* (customers, invoices): Reports → **Customer Contact
@@ -52,9 +56,9 @@ invent the other side of transactions.
      --currency CAD --source "QuickBooks Online, <company>" -o books.json
    ```
 
-   Add the module lists the user gave you:
-   `--customers "Customer Contact List.csv" --invoices "Invoice List.csv"
-   --bills "Unpaid Bills.csv"`.
+   Add the lists the user gave you:
+   `--customers "Customer Contact List.csv" --vendors "Vendor Contact
+   List.csv" --invoices "Invoice List.csv" --bills "Unpaid Bills.csv"`.
 
    Several journal or IIF files can be given at once. `--date-format dmy`
    or `mdy` settles how `03/04/2026` reads when the file can't. If the
@@ -77,6 +81,17 @@ invent the other side of transactions.
      levels; the converter flags the ones that don't fit and leaves them at
      the top level. A parent that only appeared in sub-account names is
      created with the type of what is under it: check it;
+   - **account tags**: QuickBooks Bank accounts are tagged `chequing` (or
+     `savings` when the detail type or name says so) and Credit Card
+     accounts `credit_card`. Fix a wrong guess, or remove `"kind"`; the tag
+     only fits asset accounts (chequing, savings) and liabilities (credit
+     card);
+   - **entities**: the customers and vendors found (from the lists, the
+     invoices and bills, and the names on transactions). A name on both
+     sides is one entity that is both. Merge spellings of the same business
+     (`"Staples"` / `"STAPLES #114"`): keep one entity and point the
+     entries at it. Names on transfers and journal entries that aren't a
+     customer or vendor are left off; that is expected;
    - account codes: QuickBooks' own numbers are kept; accounts without one
      are numbered by type (1000s assets, 2000s liabilities, 3000s equity,
      4000s revenue, 5000s expenses). Renumber if the user has a scheme;
@@ -122,8 +137,8 @@ invent the other side of transactions.
    then Settings → Backups → Restore from a backup → Choose a backup to
    restore → upload the file → select it → type RESTORE. Ledger backs up
    that organization's current books first, then replaces them. Users,
-   settings and other organizations are not touched. Needs Ledger 0.15.0 or
-   later (the dump has sub-accounts; an older Ledger refuses a dump from a newer one).
+   settings and other organizations are not touched. Needs Ledger 0.16.0 or
+   later (an older Ledger refuses a dump from a newer one).
 
 ## PostgreSQL version
 
@@ -147,12 +162,15 @@ version (`--pg-version 16`): Ledger would refuse it.
   "ledger_books": 1,
   "source": "QuickBooks Online, Acme Inc.",
   "accounts": [
-    { "code": "1000", "name": "Chequing", "type": "asset", "currency": "CAD", "description": "" },
+    { "code": "1000", "name": "Chequing", "type": "asset", "currency": "CAD", "description": "", "kind": "chequing" },
     { "code": "4000", "name": "Sales", "type": "revenue", "currency": "CAD" },
     { "code": "4010", "name": "Consulting", "type": "revenue", "currency": "CAD", "parent": "4000" }
   ],
+  "entities": [
+    { "name": "Globex Corp", "customer": true, "vendor": false, "email": "ap@globex.example", "phone": "", "address": "", "notes": "" }
+  ],
   "entries": [
-    { "date": "2026-01-15", "description": "Invoice - Globex Corp", "reference": "1001",
+    { "date": "2026-01-15", "description": "Invoice - Globex Corp", "reference": "1001", "entity": "Globex Corp",
       "lines": [
         { "account": "1200", "debit": 105000, "memo": "Consulting January" },
         { "account": "4000", "credit": 100000, "memo": "" },
@@ -166,6 +184,12 @@ version (`--pg-version 16`): Ledger would refuse it.
   has a `debit` or a `credit`, never both.
 - `account` is an account's `code`. Codes are 1-32 letters, digits, `.`,
   `_` or `-`.
+- `kind` (optional) tags a bank or card account: `chequing` or `savings`
+  (asset accounts), `credit_card` (a liability).
+- `entities` is Ledger's one list of customers and vendors; names are
+  unique whatever the capitals, and each is a customer, a vendor or both.
+  An entry's optional `entity` is one of those names: the vendor an expense
+  was paid to, or the customer an entry is about.
 - `parent` (optional) makes an account a sub-account of another: same type
   and currency, no loops, at most 5 levels. Entries can post to a parent
   and to its sub-accounts alike. Ledger's chart and statements then show
@@ -233,7 +257,8 @@ invoice-costumer-module (Sales), mastifdogo/llm-api-module (Auto sort).
 
 ## What does not come across
 
-The chart of accounts, the journal entries, and the module data above.
+The chart of accounts (with sub-accounts and bank/card tags), the customers
+and vendors, the journal entries, and the module data above.
 Payroll details, attachments, bank feeds, reconciliations, items, vendors
 as a list, estimates and recurring templates stay in QuickBooks (their
 accounting effect is in the journal entries). Say this when you hand over

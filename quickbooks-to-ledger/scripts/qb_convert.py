@@ -57,6 +57,30 @@ NAME_HINTS = [
 RANGES = {"asset": 1000, "liability": 2000, "equity": 3000, "revenue": 4000, "expense": 5000}
 
 
+def qb_kind(qb_type, detail, name):
+    """Ledger's account tag for a QuickBooks bank or card account, or None."""
+    t, d = str(qb_type or "").strip().lower(), f"{detail or ''} {name or ''}".lower()
+    if t in ("credit card", "ccard"):
+        return "credit_card"
+    if t == "bank":
+        return "savings" if re.search(r"saving|money market", d) else "chequing"
+    return None
+
+
+# Which side of the business a QuickBooks transaction type deals with.
+VENDOR_TYPES = re.compile(r"bill|expense|cheque|check|purchase|vendor|supplier|credit card (charge|expense|credit)", re.I)
+CUSTOMER_TYPES = re.compile(r"invoice|sales receipt|payment|deposit|credit memo|refund|estimate|statement charge", re.I)
+
+
+def role_of(tx_type):
+    t = str(tx_type or "")
+    if re.search(r"bill|vendor|supplier", t, re.I):
+        return "vendor"
+    if CUSTOMER_TYPES.search(t):
+        return "customer"
+    return "vendor" if VENDOR_TYPES.search(t) else None
+
+
 def norm(s):
     return re.sub(r"[^a-z0-9#]+", " ", str(s or "").lower()).strip()
 
@@ -140,21 +164,36 @@ class Books:
         self.accounts = OrderedDict()  # QuickBooks name -> {code?, name, type?, description, guessed}
         self.entries = []
         self.review = []
+        self.entities = OrderedDict()  # lower name -> entity (Ledger's shared list of customers and vendors)
         self.customers = OrderedDict()  # lower name -> customer (Sales module)
         self.invoices = []
         self.bills = []
+
+    def entity(self, name, role, **fields):
+        """Adds (or finds) an entity and gives it the role ("customer" or "vendor"); returns its name."""
+        name = re.sub(r"\s+", " ", str(name or "")).strip()[:200]
+        if not name:
+            return None
+        e = self.entities.setdefault(name.lower(), {"name": name, "customer": False, "vendor": False, "email": "", "phone": "", "address": "", "notes": ""})
+        if role:
+            e[role] = True
+        for k, v in fields.items():
+            if v and k in e and not e[k]:
+                e[k] = str(v).strip()
+        return e["name"]
 
     def customer(self, name, **fields):
         name = str(name).strip()[:200]
         if not name:
             return None
+        self.entity(name, "customer", **{k: v for k, v in fields.items() if k in ("email", "phone", "address", "notes")})
         c = self.customers.setdefault(name.lower(), {"name": name, "company": "", "email": "", "phone": "", "address": "", "currency": self.currency, "notes": ""})
         for k, v in fields.items():
             if v and not c.get(k):
                 c[k] = str(v).strip()
         return c["name"]
 
-    def account(self, qb_name, type_=None, number=None, description=""):
+    def account(self, qb_name, type_=None, number=None, description="", kind=None):
         full = re.sub(r"\s*:\s*", ":", str(qb_name).strip())
         # "1000 Chequing" / "1000 · Chequing": the number is part of the name.
         m = re.match(r"^(\d{3,8})\s*[·\-–: ]\s*(.+)$", full.split(":")[-1]) if not number else None
@@ -166,6 +205,8 @@ class Books:
             a = self.accounts[key] = {"parent_key": parent_key, "qb_name": full, "name": (m[2] if m else full.split(":")[-1]).strip()[:200], "number": number or (m[1] if m else ""), "type": None, "description": description}
         if type_ and not a["type"]:
             a["type"] = type_
+        if kind and not a.get("kind"):
+            a["kind"] = kind
         if number and not a["number"]:
             a["number"] = number
         return key
@@ -205,6 +246,9 @@ class Books:
                 counters[a["type"]] = n + 10
         for a in self.accounts.values():
             row = {"code": a["code"], "name": a["name"], "type": a["type"], "currency": self.currency, "description": a["description"]}
+            # Bank and card tags only fit their own account type.
+            if a.get("kind") and {"chequing": "asset", "savings": "asset", "credit_card": "liability"}[a["kind"]] == a["type"]:
+                row["kind"] = a["kind"]
             parent = self.accounts[a["parent_key"]] if a.get("parent_key") else None
             if parent and parent["type"] != a["type"]:
                 self.review.append(f'account "{a["qb_name"]}" is a {a["type"]} account under a {parent["type"]} account; Ledger needs them the same, so it was left at the top level')
@@ -249,6 +293,7 @@ def read_account_list(path, books):
     c_type = col(cells, "type", "account type")
     c_num = col(cells, "account #", "number", "account number", "no", "#")
     c_desc = col(cells, "description")
+    c_detail = col(cells, "detail type")
     if c_name is None:
         sys.exit(f"{path}: no Account / Name column")
     n = 0
@@ -257,7 +302,7 @@ def read_account_list(path, books):
         name, t = get(c_name), QB_TYPES.get(norm(get(c_type)).replace(" a r", " (a/r)").replace(" a p", " (a/p)")) or QB_TYPES.get(get(c_type).strip().lower())
         if not name or name.lower().startswith("total"):
             continue
-        key = books.account(name, t, get(c_num), get(c_desc))
+        key = books.account(name, t, get(c_num), get(c_desc), qb_kind(get(c_type), get(c_detail), name))
         if not t and get(c_type):
             books.review.append(f'account "{name}": QuickBooks type "{get(c_type)}" is not one I know; set its type')
         n += 1
@@ -302,7 +347,11 @@ def read_journal(path, books, date_format):
         if d:
             close()
             parts = [get(r, c_type), get(r, c_name)]
-            cur = {"date": d, "description": " - ".join(p for p in parts if p)[:500], "reference": get(r, c_num)[:100], "lines": [], "_row": n, "_memo": get(r, c_memo)}
+            who = get(r, c_name)
+            role = role_of(get(r, c_type)) if who else None
+            known = books.entities.get(who.lower()) if who else None
+            ent = books.entity(who, role) if who and (role or known) else None
+            cur = {"entity": ent, "date": d, "description": " - ".join(p for p in parts if p)[:500], "reference": get(r, c_num)[:100], "lines": [], "_row": n, "_memo": get(r, c_memo)}
         elif get(r, c_date) and not acc:
             continue  # titles, "Cash basis", page footers
         if not acc or cur is None or (dr is None and cr is None):
@@ -345,6 +394,26 @@ def read_customers(path, books):
             continue
         phone = re.sub(r"^(phone|mobile|main)\s*:\s*", "", get(c["phone"]), flags=re.I)
         books.customer(name, company=get(c["company"]), email=get(c["email"]).split(",")[0], phone=phone, address=get(c["address"]), notes=get(c["notes"]))
+        n += 1
+    return n
+
+
+def read_vendors(path, books):
+    rows = read_table(path)
+    h, cells = find_header(rows, ["vendor"])
+    if h is None:
+        h, cells = find_header(rows, ["name"])
+    if h is None:
+        sys.exit(f"{path}: no header row with a Vendor or Name column; is this the Vendor Contact List?")
+    c_name = col(cells, "vendor", "vendor full name", "supplier", "name", "display name")
+    c = {k: col(cells, *names) for k, names in {"email": ("email", "main email"), "phone": ("phone", "phone numbers", "main phone", "mobile"), "address": ("billing address", "address", "full address"), "notes": ("notes", "note")}.items()}
+    n = 0
+    for r in rows[h + 1:]:
+        get = lambda i: r[i].strip() if i is not None and i < len(r) else ""
+        name = get(c_name)
+        if not name or name.lower().startswith("total"):
+            continue
+        books.entity(name, "vendor", email=get(c["email"]).split(",")[0], phone=re.sub(r"^(phone|mobile|main)\s*:\s*", "", get(c["phone"]), flags=re.I), address=get(c["address"]), notes=get(c["notes"]))
         n += 1
     return n
 
@@ -401,6 +470,7 @@ def read_bills(path, books, date_format):
             continue
         if x["amount"] <= 0:
             continue
+        books.entity(x["party"], "vendor")
         books.bills.append({"vendor": x["party"][:200], "invoice_number": x["number"], "bill_date": x["date"], "due_date": x["due"], "amount": x["amount"],
                             "currency": books.currency, "paid": x["open"] == 0 if x["open"] is not None else False, "summary": x["memo"][:500]})
         n += 1
@@ -425,12 +495,15 @@ def read_iif(path, books, date_format):
         f = lambda k: (r[hd.index(k)].strip() if k in hd and hd.index(k) < len(r) else "")
         if tag == "ACCNT":
             t = QB_TYPES.get(f("ACCNTTYPE").lower())
-            books.account(f("NAME"), t, f("ACCNUM"), f("DESC"))
+            books.account(f("NAME"), t, f("ACCNUM"), f("DESC"), qb_kind(f("ACCNTTYPE"), "", f("NAME")))
             if not t:
                 books.review.append(f'account "{f("NAME")}": QuickBooks type "{f("ACCNTTYPE")}" is not one I know; set its type')
         elif tag == "CUST":
             addr = "\n".join(x for x in (f("BADDR1"), f("BADDR2"), f("BADDR3"), f("BADDR4"), f("BADDR5")) if x)
             books.customer(f("NAME"), company=f("COMPANYNAME"), email=f("EMAIL"), phone=f("PHONE1"), address=addr, notes=f("NOTE"))
+        elif tag == "VEND":
+            addr = "\n".join(x for x in (f("ADDR1"), f("ADDR2"), f("ADDR3"), f("ADDR4"), f("ADDR5")) if x)
+            books.entity(f("NAME"), "vendor", email=f("EMAIL"), phone=f("PHONE1"), address=addr, notes=f("NOTE"))
         elif tag in ("TRNS", "SPL"):
             if tag == "TRNS":
                 d = parse_date(f("DATE"), fmt)
@@ -438,7 +511,10 @@ def read_iif(path, books, date_format):
                     books.review.append(f'transaction dated "{f("DATE")}" skipped: the date could not be read')
                     cur = None
                     continue
-                cur = {"date": d, "description": " - ".join(p for p in (f("TRNSTYPE"), f("NAME")) if p)[:500], "reference": f("DOCNUM")[:100], "lines": [], "_memo": f("MEMO")}
+                who = f("NAME")
+                role = role_of(f("TRNSTYPE")) if who else None
+                ent = books.entity(who, role) if who and (role or who.lower() in books.entities) else None
+                cur = {"entity": ent, "date": d, "description": " - ".join(p for p in (f("TRNSTYPE"), f("NAME")) if p)[:500], "reference": f("DOCNUM")[:100], "lines": [], "_memo": f("MEMO")}
                 amt = money(f("AMOUNT")) or 0
                 kind = f("TRNSTYPE").upper()
                 cur["_doc"] = None
@@ -446,6 +522,7 @@ def read_iif(path, books, date_format):
                     cur["_doc"] = ("invoice", {"number": f("DOCNUM"), "customer": books.customer(f("NAME")), "issue_date": d, "due_date": max(parse_date(f("DUEDATE"), fmt) or d, d), "currency": books.currency,
                                                "total": amt, "tax": 0, "paid": amt if f("PAID").upper() == "Y" else 0, "notes": f("MEMO")[:1000], "po_number": f("PONUM")[:100], "lines": []})
                 elif kind == "BILL" and amt < 0:
+                    books.entity(f("NAME"), "vendor")
                     cur["_doc"] = ("bill", {"vendor": f("NAME")[:200], "invoice_number": f("DOCNUM"), "bill_date": d, "due_date": parse_date(f("DUEDATE"), fmt) or d, "amount": -amt,
                                             "currency": books.currency, "paid": f("PAID").upper() == "Y", "summary": f("MEMO")[:500]})
             if cur is None:
@@ -482,6 +559,7 @@ def main():
     ap.add_argument("files", nargs="+", help="Journal report (CSV/XLSX) and/or .IIF files")
     ap.add_argument("--accounts", action="append", default=[], help="Account List / Chart of Accounts export (CSV/XLSX)")
     ap.add_argument("--customers", action="append", default=[], help="Customer Contact List export (for the Sales module)")
+    ap.add_argument("--vendors", action="append", default=[], help="Vendor Contact List export (for Ledger's list of customers and vendors)")
     ap.add_argument("--invoices", action="append", default=[], help="Invoice List export: Date, Num, Customer, Due Date, Amount, Open Balance (for the Sales module)")
     ap.add_argument("--bills", action="append", default=[], help="a list of bills: Unpaid Bills or Transaction List by Vendor (for Auto sort's bill tracking)")
     ap.add_argument("--currency", default="CAD", choices=["CAD", "USD"], help="the books' currency (Ledger keeps CAD and USD)")
@@ -494,13 +572,15 @@ def main():
     for p in a.accounts:
         n = read_account_list(p, books)
         print(f"{p}: {n} accounts")
+    # The lists first, so names in the journal are recognised as customers or vendors.
+    for p in a.customers:
+        print(f"{p}: {read_customers(p, books)} customers")
+    for p in a.vendors:
+        print(f"{p}: {read_vendors(p, books)} vendors")
     for p in a.files:
         before = len(books.entries)
         (read_iif if p.lower().endswith(".iif") else read_journal)(p, books, a.date_format)
         print(f"{p}: {len(books.entries) - before} transactions")
-
-    for p in a.customers:
-        print(f"{p}: {read_customers(p, books)} customers")
     for p in a.invoices:
         print(f"{p}: {read_invoices(p, books, a.date_format)} invoices")
     for p in a.bills:
@@ -541,11 +621,21 @@ def main():
         modules["categorizer"] = {"bills": books.bills}
         if not ap_code:
             books.review.append("no Accounts Payable account was found for the bills; set each bill's \"ap_account\" to its code, or Auto sort can't post their payments")
-    doc = {"ledger_books": 1, "source": a.source or "QuickBooks: " + ", ".join(a.files), "accounts": accounts, "entries": entries, "modules": modules, "review": books.review}
+    for e in entries:
+        if not e.get("entity"):
+            e.pop("entity", None)
+    entities = [e for e in books.entities.values() if e["customer"] or e["vendor"]]
+    doc = {"ledger_books": 1, "source": a.source or "QuickBooks: " + ", ".join(a.files), "accounts": accounts, "entities": entities, "entries": entries, "modules": modules, "review": books.review}
     with open(a.output, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=1, ensure_ascii=False)
 
     print(f"\nwrote {a.output}: {len(accounts)} accounts, {len(entries)} entries" + (f", {entries[0]['date']} to {entries[-1]['date']}" if entries else ""))
+    if entities:
+        both = sum(1 for e in entities if e["customer"] and e["vendor"])
+        print(f"entities: {sum(1 for e in entities if e['customer'])} customers, {sum(1 for e in entities if e['vendor'])} vendors" + (f" ({both} are both)" if both else "") + f"; {sum(1 for e in entries if e.get('entity'))} entries name one")
+    tagged = [x for x in accounts if x.get("kind")]
+    if tagged:
+        print("tagged accounts: " + ", ".join(f"{x['code']} {x['name']} ({x['kind'].replace('_', ' ')})" for x in tagged))
     if modules:
         s_ = modules.get("sales", {})
         print("modules: " + ", ".join(x for x in (f'Sales: {len(s_.get("customers", []))} customers, {len(s_.get("invoices", []))} invoices' if s_ else "", f'Auto sort: {len(books.bills)} bills' if books.bills else "") if x))

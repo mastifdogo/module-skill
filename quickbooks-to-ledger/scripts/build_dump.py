@@ -4,7 +4,7 @@
   python3 build_dump.py books.json -o ledger.dump
 
 The dump is what Ledger's backups contain: upload it under Settings ->
-Backups -> Restore from a backup -> "upload a dump file" (Ledger 0.15.0 or
+Backups -> Restore from a backup -> "upload a dump file" (Ledger 0.16.0 or
 later), in the organization whose books it should become.
 
 It is made by a real PostgreSQL: the script starts a throwaway server in a
@@ -33,6 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DB_DIR = HERE.parent / "assets" / "ledger-db"
 TYPES = ("asset", "liability", "equity", "revenue", "expense")
+KIND_TYPE = {"chequing": "asset", "savings": "asset", "credit_card": "liability"}
 CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 
 
@@ -64,8 +65,11 @@ def check_books(doc):
         if a.get("currency") not in ("CAD", "USD"):
             bad(f"account {i} ({code} {name}): currency must be CAD or USD")
         seen[code] = a.get("currency")
+        kind = a.get("kind") or None
+        if kind is not None and KIND_TYPE.get(kind) != a.get("type"):
+            bad(f"account {i} ({code} {name}): kind must be chequing or savings (asset accounts) or credit_card (a liability)")
         accounts.append({"code": code, "name": name[:200], "type": a.get("type"), "currency": a.get("currency"), "description": str(a.get("description") or "").strip()[:1000],
-                         "parent": str(a.get("parent") or "").strip() or None})
+                         "parent": str(a.get("parent") or "").strip() or None, "kind": kind})
     if not accounts:
         die("the books file has no accounts")
     # Sub-accounts: the parent exists, is the same type and currency, no loops, at most 5 levels.
@@ -87,6 +91,20 @@ def check_books(doc):
             bad(f"account {a['code']} {a['name']}: it is under itself (a loop of parents)")
         elif depth > 5:
             bad(f"account {a['code']} {a['name']}: accounts can be nested at most 5 levels deep")
+    # Entities: Ledger's one list of customers and vendors (an entity can be both).
+    entities, names = [], {}
+    for i, x in enumerate(doc.get("entities") or [], 1):
+        nm = re.sub(r"\s+", " ", str(x.get("name") or "")).strip()[:200]
+        if not nm:
+            bad(f"entity {i}: name is missing")
+            continue
+        if nm.lower() in names:
+            bad(f"entity {i}: {nm!r} is listed twice (names are unique whatever the capitals; mark one as both customer and vendor)")
+        if not (x.get("customer") is True or x.get("vendor") is True):
+            bad(f"entity {i} ({nm}): must be a customer, a vendor or both")
+        names[nm.lower()] = nm
+        entities.append({"name": nm, "customer": x.get("customer") is True, "vendor": x.get("vendor") is True,
+                         **{k: str(x.get(k) or "").strip()[:n] for k, n in (("email", 200), ("phone", 100), ("address", 1000), ("notes", 2000))}})
     entries = []
     for i, e in enumerate(doc.get("entries") or [], 1):
         d = str(e.get("date", ""))
@@ -120,12 +138,15 @@ def check_books(doc):
         for cur, t in totals.items():
             if t != 0:
                 bad(f"{at}: out of balance by {t / 100:.2f} {cur}")
-        entries.append({"date": d, "description": desc, "reference": str(e.get("reference") or "").strip()[:100], "lines": lines})
+        ent = re.sub(r"\s+", " ", str(e.get("entity") or "")).strip()
+        if ent and ent.lower() not in names:
+            bad(f"{at}: entity {ent!r} is not in the entities list")
+        entries.append({"date": d, "description": desc, "reference": str(e.get("reference") or "").strip()[:100], "lines": lines, "entity": names.get(ent.lower()) if ent else None})
         if len(problems) >= 40:
             break
     if problems:
         die("the books file has problems:\n  - " + "\n  - ".join(problems) + ("\n  ..." if len(problems) >= 40 else ""))
-    return accounts, entries
+    return accounts, entries, entities
 
 
 MODULES = {"sales": "mod_sales", "categorizer": "mod_categorizer"}  # module id -> its schema
@@ -280,18 +301,22 @@ def q(s):
     return "'" + str(s).replace("\x00", "").replace("'", "''") + "'"
 
 
-def load_sql(accounts, entries):
+def load_sql(accounts, entries, entities):
     out = ["BEGIN;"]
     for i in range(0, len(accounts), 200):
-        rows = ",\n".join(f"({q(a['code'])}, {q(a['name'])}, {q(a['type'])}::account_type, {q(a['currency'])}, {q(a['description'])})" for a in accounts[i:i + 200])
-        out.append(f"INSERT INTO accounts (code, name, type, currency, description) VALUES\n{rows};")
+        rows = ",\n".join(f"({q(a['code'])}, {q(a['name'])}, {q(a['type'])}::account_type, {q(a['currency'])}, {q(a['description'])}, {'NULL' if a['kind'] is None else q(a['kind'])})" for a in accounts[i:i + 200])
+        out.append(f"INSERT INTO accounts (code, name, type, currency, description, kind) VALUES\n{rows};")
+    for i in range(0, len(entities), 200):
+        rows = ",\n".join(f"({q(x['name'])}, {'true' if x['customer'] else 'false'}, {'true' if x['vendor'] else 'false'}, {q(x['email'])}, {q(x['phone'])}, {q(x['address'])}, {q(x['notes'])})" for x in entities[i:i + 200])
+        out.append(f"INSERT INTO entities (name, is_customer, is_vendor, email, phone, address, notes) VALUES\n{rows};")
     for a in accounts:
         if a["parent"]:
             out.append(f"UPDATE accounts SET parent_id = (SELECT id FROM accounts WHERE code = {q(a['parent'])}) WHERE code = {q(a['code'])};")
     for e in entries:
         vals = ", ".join(f"({n}, {q(l['account'])}, {l['amount']}::bigint, {q(l['memo'])})" for n, l in enumerate(e["lines"], 1))
         out.append(
-            f"WITH e AS (INSERT INTO journal_entries (entry_date, description, reference) VALUES ({q(e['date'])}, {q(e['description'])}, {q(e['reference'])}) RETURNING id)\n"
+            f"WITH e AS (INSERT INTO journal_entries (entry_date, description, reference, entity_id) VALUES ({q(e['date'])}, {q(e['description'])}, {q(e['reference'])}, "
+            + (f"(SELECT id FROM entities WHERE lower(name) = lower({q(e['entity'])}))" if e["entity"] else "NULL") + ") RETURNING id)\n"
             f"INSERT INTO transactions (journal_entry_id, account_id, currency, line_number, amount, memo)\n"
             f"SELECT e.id, a.id, a.currency, v.n, v.amount, v.memo FROM e, (VALUES {vals}) AS v(n, code, amount, memo) JOIN accounts a ON a.code = v.code ORDER BY v.n;"
         )
@@ -419,7 +444,7 @@ def main():
     a = ap.parse_args()
 
     doc = json.load(open(a.books, encoding="utf-8"))
-    accounts, entries = check_books(doc)
+    accounts, entries, entities = check_books(doc)
     mods = check_modules(doc, {x["code"] for x in accounts})
     cents = lambda n: f"{n / 100:,.2f}"
     bal = {x["code"]: 0 for x in accounts}
@@ -427,6 +452,8 @@ def main():
         for l in e["lines"]:
             bal[l["account"]] += l["amount"]
     print(f"{a.books}: {len(accounts)} accounts, {len(entries)} entries" + (f", {min(e['date'] for e in entries)} to {max(e['date'] for e in entries)}" if entries else ""))
+    if entities:
+        print(f"{len(entities)} entities ({sum(1 for x in entities if x['customer'])} customers, {sum(1 for x in entities if x['vendor'])} vendors); {sum(1 for e in entries if e['entity'])} entries name one")
     subs = sum(1 for x in accounts if x["parent"])
     if subs:
         print(f"{subs} of the accounts are sub-accounts")
@@ -458,7 +485,7 @@ def main():
         for m in sorted((DB_DIR / "migrations").glob("[0-9]*.sql")):
             cluster.psql("ledger", "BEGIN;\n" + m.read_text(encoding="utf-8") + f"\n;\nINSERT INTO public.schema_migrations (name) VALUES ({q(m.name)});\nCOMMIT;\n")
         sql = work / "load.sql"
-        sql.write_text(load_sql(accounts, entries), encoding="utf-8")
+        sql.write_text(load_sql(accounts, entries, entities), encoding="utf-8")
         os.chmod(sql, 0o644)
         cluster.psql("ledger", file=sql)
         if mods:

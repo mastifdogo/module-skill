@@ -3,7 +3,7 @@
 Two [Claude](https://claude.ai) skills for [Ledger](https://github.com/mastifdogo/Bookeeping), the self-hosted bookkeeping app:
 
 - **ledger-module**: build, change, check and release Ledger modules (below).
-- **quickbooks-to-ledger**: upload a QuickBooks export to a chat (a Journal report as CSV/Excel, an Account List, or a Desktop .IIF file) and get back a `ledger.dump` to restore under Settings → Backups → Restore → upload a dump file. Upload [`quickbooks-to-ledger-skill.zip`](quickbooks-to-ledger-skill.zip) the same way as the other skill. Writing the dump needs PostgreSQL 15 where Claude runs its code (the skill looks for it and otherwise fetches it from PyPI); Ledger 0.15.0 or later restores it. QuickBooks sub-accounts come across as Ledger sub-accounts.
+- **quickbooks-to-ledger**: upload a QuickBooks export to a chat (a Journal report as CSV/Excel, an Account List, or a Desktop .IIF file) and get back a `ledger.dump` to restore under Settings → Backups → Restore → upload a dump file. Upload [`quickbooks-to-ledger-skill.zip`](quickbooks-to-ledger-skill.zip) the same way as the other skill. Writing the dump needs PostgreSQL 15 where Claude runs its code (the skill looks for it and otherwise fetches it from PyPI); Ledger 0.16.0 or later restores it. QuickBooks sub-accounts come across as Ledger sub-accounts.
 
 ## ledger-module skill
 
