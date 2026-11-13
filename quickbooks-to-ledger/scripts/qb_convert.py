@@ -161,9 +161,9 @@ class Books:
         key = full.lower()
         a = self.accounts.get(key)
         if not a:
-            a = self.accounts[key] = {"qb_name": full, "name": (m[2] if m else full.split(":")[-1]).strip()[:200], "number": number or (m[1] if m else ""), "type": None, "description": description}
-            if ":" in full:
-                a["description"] = a["description"] or f"QuickBooks: {full}"
+            # "Parent:Child" is a sub-account: the parent comes first.
+            parent_key = self.account(full.rsplit(":", 1)[0]) if ":" in full else None
+            a = self.accounts[key] = {"parent_key": parent_key, "qb_name": full, "name": (m[2] if m else full.split(":")[-1]).strip()[:200], "number": number or (m[1] if m else ""), "type": None, "description": description}
         if type_ and not a["type"]:
             a["type"] = type_
         if number and not a["number"]:
@@ -174,6 +174,17 @@ class Books:
         used = set()
         counters = dict(RANGES)
         out = []
+        # A sub-account without a type of its own takes its parent's (QuickBooks keeps them the same).
+        for a in self.accounts.values():
+            up = a
+            while not a["type"] and up.get("parent_key"):
+                up = self.accounts[up["parent_key"]]
+                a["type"] = up["type"]
+        # A parent QuickBooks didn't describe takes the type of what is under it.
+        for a in reversed(list(self.accounts.values())):
+            p = self.accounts.get(a.get("parent_key") or "")
+            if p and not p["type"] and a["type"]:
+                p["type"] = a["type"]
         for a in self.accounts.values():
             if not a["type"]:
                 a["type"] = next((t for pat, t in NAME_HINTS if re.search(pat, a["qb_name"].lower())), "expense")
@@ -192,7 +203,14 @@ class Books:
                 a["code"] = str(n)
                 used.add(a["code"])
                 counters[a["type"]] = n + 10
-            out.append({"code": a["code"], "name": a["name"], "type": a["type"], "currency": self.currency, "description": a["description"]})
+        for a in self.accounts.values():
+            row = {"code": a["code"], "name": a["name"], "type": a["type"], "currency": self.currency, "description": a["description"]}
+            parent = self.accounts[a["parent_key"]] if a.get("parent_key") else None
+            if parent and parent["type"] != a["type"]:
+                self.review.append(f'account "{a["qb_name"]}" is a {a["type"]} account under a {parent["type"]} account; Ledger needs them the same, so it was left at the top level')
+            elif parent:
+                row["parent"] = parent["code"]
+            out.append(row)
         codes = {k: a["code"] for k, a in self.accounts.items()}
         for e in self.entries:
             for l in e["lines"]:

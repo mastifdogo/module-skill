@@ -4,7 +4,7 @@
   python3 build_dump.py books.json -o ledger.dump
 
 The dump is what Ledger's backups contain: upload it under Settings ->
-Backups -> Restore from a backup -> "upload a dump file" (Ledger 0.14.2 or
+Backups -> Restore from a backup -> "upload a dump file" (Ledger 0.15.0 or
 later), in the organization whose books it should become.
 
 It is made by a real PostgreSQL: the script starts a throwaway server in a
@@ -64,9 +64,29 @@ def check_books(doc):
         if a.get("currency") not in ("CAD", "USD"):
             bad(f"account {i} ({code} {name}): currency must be CAD or USD")
         seen[code] = a.get("currency")
-        accounts.append({"code": code, "name": name[:200], "type": a.get("type"), "currency": a.get("currency"), "description": str(a.get("description") or "").strip()[:1000]})
+        accounts.append({"code": code, "name": name[:200], "type": a.get("type"), "currency": a.get("currency"), "description": str(a.get("description") or "").strip()[:1000],
+                         "parent": str(a.get("parent") or "").strip() or None})
     if not accounts:
         die("the books file has no accounts")
+    # Sub-accounts: the parent exists, is the same type and currency, no loops, at most 5 levels.
+    by = {a["code"]: a for a in accounts}
+    for a in accounts:
+        p = by.get(a["parent"]) if a["parent"] else None
+        if a["parent"] and not p:
+            bad(f"account {a['code']} {a['name']}: there is no parent account {a['parent']!r}")
+        elif p and (p["type"] != a["type"] or p["currency"] != a["currency"]):
+            bad(f"account {a['code']} {a['name']}: its parent {p['code']} must have the same type and currency")
+        depth, up, loop = 1, p, False
+        while up:
+            depth += 1
+            if up is a or depth > 50:
+                loop = True
+                break
+            up = by.get(up["parent"]) if up["parent"] else None
+        if loop:
+            bad(f"account {a['code']} {a['name']}: it is under itself (a loop of parents)")
+        elif depth > 5:
+            bad(f"account {a['code']} {a['name']}: accounts can be nested at most 5 levels deep")
     entries = []
     for i, e in enumerate(doc.get("entries") or [], 1):
         d = str(e.get("date", ""))
@@ -265,6 +285,9 @@ def load_sql(accounts, entries):
     for i in range(0, len(accounts), 200):
         rows = ",\n".join(f"({q(a['code'])}, {q(a['name'])}, {q(a['type'])}::account_type, {q(a['currency'])}, {q(a['description'])})" for a in accounts[i:i + 200])
         out.append(f"INSERT INTO accounts (code, name, type, currency, description) VALUES\n{rows};")
+    for a in accounts:
+        if a["parent"]:
+            out.append(f"UPDATE accounts SET parent_id = (SELECT id FROM accounts WHERE code = {q(a['parent'])}) WHERE code = {q(a['code'])};")
     for e in entries:
         vals = ", ".join(f"({n}, {q(l['account'])}, {l['amount']}::bigint, {q(l['memo'])})" for n, l in enumerate(e["lines"], 1))
         out.append(
@@ -404,6 +427,9 @@ def main():
         for l in e["lines"]:
             bal[l["account"]] += l["amount"]
     print(f"{a.books}: {len(accounts)} accounts, {len(entries)} entries" + (f", {min(e['date'] for e in entries)} to {max(e['date'] for e in entries)}" if entries else ""))
+    subs = sum(1 for x in accounts if x["parent"])
+    if subs:
+        print(f"{subs} of the accounts are sub-accounts")
     print("closing balances by type (debits positive):")
     for t in TYPES:
         print(f"  {t:<10} {cents(sum(bal[x['code']] for x in accounts if x['type'] == t)):>16}")

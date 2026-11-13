@@ -71,6 +71,12 @@ invent the other side of transactions.
      long-term liabilities → liability; Equity → equity; Income, Other
      income → revenue; Expenses, Other expense, Cost of goods sold →
      expense. A wrong type puts the account on the wrong report;
+   - **sub-accounts**: QuickBooks' `Parent:Child` accounts become
+     sub-accounts (`"parent"` holds the parent's code). Ledger needs a
+     sub-account to have its parent's type and currency and allows 5
+     levels; the converter flags the ones that don't fit and leaves them at
+     the top level. A parent that only appeared in sub-account names is
+     created with the type of what is under it: check it;
    - account codes: QuickBooks' own numbers are kept; accounts without one
      are numbered by type (1000s assets, 2000s liabilities, 3000s equity,
      4000s revenue, 5000s expenses). Renumber if the user has a scheme;
@@ -116,8 +122,8 @@ invent the other side of transactions.
    then Settings → Backups → Restore from a backup → Choose a backup to
    restore → upload the file → select it → type RESTORE. Ledger backs up
    that organization's current books first, then replaces them. Users,
-   settings and other organizations are not touched. Needs Ledger 0.14.2 or
-   later.
+   settings and other organizations are not touched. Needs Ledger 0.15.0 or
+   later (the dump has sub-accounts; an older Ledger refuses a dump from a newer one).
 
 ## PostgreSQL version
 
@@ -141,7 +147,9 @@ version (`--pg-version 16`): Ledger would refuse it.
   "ledger_books": 1,
   "source": "QuickBooks Online, Acme Inc.",
   "accounts": [
-    { "code": "1000", "name": "Chequing", "type": "asset", "currency": "CAD", "description": "" }
+    { "code": "1000", "name": "Chequing", "type": "asset", "currency": "CAD", "description": "" },
+    { "code": "4000", "name": "Sales", "type": "revenue", "currency": "CAD" },
+    { "code": "4010", "name": "Consulting", "type": "revenue", "currency": "CAD", "parent": "4000" }
   ],
   "entries": [
     { "date": "2026-01-15", "description": "Invoice - Globex Corp", "reference": "1001",
@@ -158,6 +166,10 @@ version (`--pg-version 16`): Ledger would refuse it.
   has a `debit` or a `credit`, never both.
 - `account` is an account's `code`. Codes are 1-32 letters, digits, `.`,
   `_` or `-`.
+- `parent` (optional) makes an account a sub-account of another: same type
+  and currency, no loops, at most 5 levels. Entries can post to a parent
+  and to its sub-accounts alike. Ledger's chart and statements then show
+  the tree with a total for each parent.
 - `date` is `YYYY-MM-DD`. Every entry needs a description and at least two
   lines, and must balance within each currency.
 - An account's currency is CAD or USD and can't change later. Books in
