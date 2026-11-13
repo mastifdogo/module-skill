@@ -29,7 +29,7 @@ repository.
 - Read **`<ledger>/docs/MODULE_LLM_CONTEXT.md`** in full before writing
   anything: manifest, `ctx` API and return shapes, `ctx.settings`,
   `ctx.dashboard`, `ctx.llm`, `ctx.gmail`, `ctx.search`, `ctx.files`,
-  `ctx.storage`, `ctx.imports`, `ctx.orgs`, roles, migrations, UI and security rules.
+  `ctx.storage`, `ctx.imports`, `ctx.entities`, `ctx.orgs`, roles, migrations, UI and security rules.
 - Then follow **`<ledger>/.claude/skills/ledger-module/SKILL.md`** (design,
   implementation rules, checks, publishing). Where the docs and Ledger's code
   disagree, the code wins (`backend/src/module-host.ts`, `modules.ts`,
@@ -108,6 +108,27 @@ feature the module uses (the context file says which version added what;
   from `ctx.files.targets(kind)`. Modules that keep customers or vendors
   accept `customer` / `vendor` lists (Ledger ≥ 0.12.0): Ledger's "Migrate
   from other software" sends them there for the user to review and approve.
+- **Customers and vendors** live in Ledger's shared entity list
+  (`ctx.entities`, Ledger 0.16.0), not in a names table of the module's
+  own: an entity is a customer, a vendor, or both, and every module and
+  Ledger itself (the vendor on an expense) use the same one. Keep only the
+  entity's `id` in the module's tables, plus what is the module's own
+  (payment terms, a tax number). Use `ctx.entities.ensure(name, "vendor")`
+  to find or add one, `list({ role })` for pickers, and pass `entity_id`
+  when posting an entry so it shows who it is with. A module that already
+  has its own customers or vendors table moves them across in a migration
+  step the user approves, matching by name. Entities are made inactive,
+  never deleted. Lists handed between modules use the file kind `entity`
+  (a `role` column says customer, vendor or both).
+- **Accounts**: `Account.kind` (Ledger 0.16.0) tags bank and card accounts
+  (`chequing`, `savings`, `credit_card`): list tagged accounts first
+  wherever the user picks where money came from or went. Accounts can be
+  **sub-accounts** (Ledger 0.15.0): `parent_code` is the parent,
+  `balance_cents` the account's own postings, `total_balance_cents` adds
+  everything below it. Show account pickers and lists as a tree (indent
+  sub-accounts under their parent) and use a parent's
+  `total_balance_cents` for group totals; post to whichever account the
+  user picks, parent or sub-account.
 - Organizations (Ledger ≥ 0.11.0): each organization's books, and the
   module's schema, are a separate database, and requests already run in the
   user's current one, so no organization columns. Background jobs that touch
