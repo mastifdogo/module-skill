@@ -6,9 +6,16 @@ Reads, in any combination:
     dates, exported to CSV or Excel): the transactions
   * an Account List / Chart of Accounts export (CSV or Excel): account types
     and numbers
-  * an .IIF file (QuickBooks Desktop): accounts and transactions
+  * an .IIF file (QuickBooks Desktop): accounts, transactions, customers,
+    invoices and bills
+  * for Ledger's modules: a Customer Contact List and an Invoice List (Sales
+    module), and a bill list such as Unpaid Bills or Transaction List by
+    Vendor (Auto sort's bill tracking)
 
   python3 qb_convert.py Journal.csv --accounts "Account List.csv" -o books.json
+  python3 qb_convert.py Journal.csv --accounts "Account List.csv" \
+      --customers "Customer Contact List.csv" --invoices "Invoice List.csv" \
+      --bills "Unpaid Bills.csv" -o books.json
   python3 qb_convert.py company.iif -o books.json
 
 books.json is meant to be read and corrected (by you or by Claude) before
@@ -133,6 +140,19 @@ class Books:
         self.accounts = OrderedDict()  # QuickBooks name -> {code?, name, type?, description, guessed}
         self.entries = []
         self.review = []
+        self.customers = OrderedDict()  # lower name -> customer (Sales module)
+        self.invoices = []
+        self.bills = []
+
+    def customer(self, name, **fields):
+        name = str(name).strip()[:200]
+        if not name:
+            return None
+        c = self.customers.setdefault(name.lower(), {"name": name, "company": "", "email": "", "phone": "", "address": "", "currency": self.currency, "notes": ""})
+        for k, v in fields.items():
+            if v and not c.get(k):
+                c[k] = str(v).strip()
+        return c["name"]
 
     def account(self, qb_name, type_=None, number=None, description=""):
         full = re.sub(r"\s*:\s*", ":", str(qb_name).strip())
@@ -183,6 +203,8 @@ class Books:
 def find_header(rows, need):
     for i, r in enumerate(rows[:40]):
         cells = [norm(c) for c in r]
+        if sum(1 for c in cells if c) < 2:
+            continue  # a title line, not the header
         if all(any(c == n or c.startswith(n) for c in cells) for n in need):
             return i, cells
     return None, None
@@ -277,6 +299,96 @@ def read_journal(path, books, date_format):
     close()
 
 
+def table(path, need, what):
+    rows = read_table(path)
+    h, cells = find_header(rows, need)
+    if h is None:
+        sys.exit(f"{path}: no header row with {' and '.join(need)} columns; is this {what}?")
+    return rows[h + 1:], cells
+
+
+def read_customers(path, books):
+    rows = read_table(path)
+    h, cells = find_header(rows, ["customer"])
+    if h is None:
+        h, cells = find_header(rows, ["name"])
+    if h is None:
+        sys.exit(f"{path}: no header row with a Customer or Name column; is this the Customer Contact List?")
+    body = rows[h + 1:]
+    c_name = col(cells, "customer", "customer full name", "name", "display name")
+    c = {k: col(cells, *names) for k, names in {
+        "company": ("company", "company name"), "email": ("email", "main email", "e mail"), "phone": ("phone", "phone numbers", "main phone", "mobile"),
+        "address": ("billing address", "bill to", "address", "full address"), "notes": ("notes", "note")}.items()}
+    n = 0
+    for r in body:
+        get = lambda i: r[i].strip() if i is not None and i < len(r) else ""
+        name = get(c_name)
+        if not name or name.lower().startswith("total"):
+            continue
+        phone = re.sub(r"^(phone|mobile|main)\s*:\s*", "", get(c["phone"]), flags=re.I)
+        books.customer(name, company=get(c["company"]), email=get(c["email"]).split(",")[0], phone=phone, address=get(c["address"]), notes=get(c["notes"]))
+        n += 1
+    return n
+
+
+def doc_rows(path, books, date_format, party, what):
+    """Rows of a list of invoices or bills: date, number, party, due date, amount, open balance."""
+    body, cells = table(path, ["date", "amount"], what)
+    c_date, c_type = col(cells, "date", "transaction date"), col(cells, "transaction type", "type")
+    c_num, c_party = col(cells, "num", "no", "number", "ref no"), col(cells, *party)
+    c_due, c_amt = col(cells, "due date"), col(cells, "amount", "total", "original amount")
+    c_open, c_memo = col(cells, "open balance", "balance", "open amount"), col(cells, "memo description", "memo", "description")
+    get = lambda r, i: r[i].strip() if i is not None and i < len(r) else ""
+    if not date_format:
+        date_format, _ = guess_date_format([get(r, c_date) for r in body] + [get(r, c_due) for r in body])
+    group = ""
+    for r in body:
+        d = parse_date(get(r, c_date), date_format)
+        if not d:
+            # Reports grouped by customer or vendor put the name on a line of its own.
+            first = next((x.strip() for x in r if x.strip()), "")
+            if first and not first.lower().startswith("total") and sum(1 for x in r if x.strip()) == 1:
+                group = first
+            continue
+        amount = money(get(r, c_amt))
+        if amount is None:
+            continue
+        open_ = money(get(r, c_open))
+        yield {"date": d, "type": get(r, c_type).lower(), "number": get(r, c_num), "party": get(r, c_party) or group,
+               "due": parse_date(get(r, c_due), date_format) or d, "amount": amount, "open": open_, "memo": get(r, c_memo)}
+
+
+def read_invoices(path, books, date_format):
+    n = 0
+    for x in doc_rows(path, books, date_format, ("customer", "name", "customer full name"), "an Invoice List"):
+        if x["type"] and "invoice" not in x["type"]:
+            continue  # payments, credit memos: their effect is in the journal
+        if x["amount"] <= 0 or not x["party"]:
+            books.review.append(f'invoice {x["number"] or "(no number)"} of {x["date"]} left out of the Sales module: {"no customer" if not x["party"] else "its amount is not positive"}')
+            continue
+        paid = x["amount"] - x["open"] if x["open"] is not None else None
+        if paid is None:
+            books.review.append(f'invoice {x["number"]} ({x["party"]}): the file has no Open Balance column, so it is marked unpaid; set "paid" if it was paid')
+        books.invoices.append({"number": x["number"], "customer": books.customer(x["party"]), "issue_date": x["date"], "due_date": max(x["due"], x["date"]),
+                               "currency": books.currency, "total": x["amount"], "tax": 0, "paid": max(0, min(x["amount"], paid or 0)), "notes": x["memo"][:1000],
+                               "lines": [{"description": x["memo"][:1000] or "Imported from QuickBooks", "quantity": 1, "unit_price": x["amount"], "amount": x["amount"]}]})
+        n += 1
+    return n
+
+
+def read_bills(path, books, date_format):
+    n = 0
+    for x in doc_rows(path, books, date_format, ("vendor", "name", "supplier", "payee"), "a list of bills (Unpaid Bills, or Transaction List by Vendor)"):
+        if x["type"] and "bill" not in x["type"] or "payment" in x["type"]:
+            continue
+        if x["amount"] <= 0:
+            continue
+        books.bills.append({"vendor": x["party"][:200], "invoice_number": x["number"], "bill_date": x["date"], "due_date": x["due"], "amount": x["amount"],
+                            "currency": books.currency, "paid": x["open"] == 0 if x["open"] is not None else False, "summary": x["memo"][:500]})
+        n += 1
+    return n
+
+
 def read_iif(path, books, date_format):
     rows = read_table(path)
     heads = {}
@@ -298,6 +410,9 @@ def read_iif(path, books, date_format):
             books.account(f("NAME"), t, f("ACCNUM"), f("DESC"))
             if not t:
                 books.review.append(f'account "{f("NAME")}": QuickBooks type "{f("ACCNTTYPE")}" is not one I know; set its type')
+        elif tag == "CUST":
+            addr = "\n".join(x for x in (f("BADDR1"), f("BADDR2"), f("BADDR3"), f("BADDR4"), f("BADDR5")) if x)
+            books.customer(f("NAME"), company=f("COMPANYNAME"), email=f("EMAIL"), phone=f("PHONE1"), address=addr, notes=f("NOTE"))
         elif tag in ("TRNS", "SPL"):
             if tag == "TRNS":
                 d = parse_date(f("DATE"), fmt)
@@ -306,14 +421,39 @@ def read_iif(path, books, date_format):
                     cur = None
                     continue
                 cur = {"date": d, "description": " - ".join(p for p in (f("TRNSTYPE"), f("NAME")) if p)[:500], "reference": f("DOCNUM")[:100], "lines": [], "_memo": f("MEMO")}
+                amt = money(f("AMOUNT")) or 0
+                kind = f("TRNSTYPE").upper()
+                cur["_doc"] = None
+                if kind == "INVOICE" and amt > 0 and f("NAME"):
+                    cur["_doc"] = ("invoice", {"number": f("DOCNUM"), "customer": books.customer(f("NAME")), "issue_date": d, "due_date": max(parse_date(f("DUEDATE"), fmt) or d, d), "currency": books.currency,
+                                               "total": amt, "tax": 0, "paid": amt if f("PAID").upper() == "Y" else 0, "notes": f("MEMO")[:1000], "po_number": f("PONUM")[:100], "lines": []})
+                elif kind == "BILL" and amt < 0:
+                    cur["_doc"] = ("bill", {"vendor": f("NAME")[:200], "invoice_number": f("DOCNUM"), "bill_date": d, "due_date": parse_date(f("DUEDATE"), fmt) or d, "amount": -amt,
+                                            "currency": books.currency, "paid": f("PAID").upper() == "Y", "summary": f("MEMO")[:500]})
             if cur is None:
                 continue
             amount = money(f("AMOUNT"))  # IIF: positive = debit
+            if tag == "SPL" and amount and cur.get("_doc") and cur["_doc"][0] == "invoice":
+                inv = cur["_doc"][1]
+                if "tax" in f("INVITEM").lower() or f("EXTRA").upper() == "AUTOSTAX":
+                    inv["tax"] += -amount
+                else:
+                    qty = abs(float(f("QNTY") or 0)) or 1
+                    inv["lines"].append({"description": (f("MEMO") or f("INVITEM") or "Imported from QuickBooks")[:1000], "quantity": qty, "unit_price": money(f("PRICE")) if f("PRICE") else round(-amount / qty), "amount": -amount})
             if amount:
                 line = {"_key": books.account(f("ACCNT")), "memo": f("MEMO")[:500]}
                 line["debit" if amount > 0 else "credit"] = abs(amount)
                 cur["lines"].append(line)
         elif tag == "ENDTRNS":
+            doc = cur.pop("_doc", None) if cur else None
+            if doc and doc[0] == "invoice":
+                inv = doc[1]
+                if not inv["lines"] or sum(l["amount"] for l in inv["lines"]) + inv["tax"] != inv["total"]:
+                    inv["tax"] = 0
+                    inv["lines"] = [{"description": inv["notes"] or "Imported from QuickBooks", "quantity": 1, "unit_price": inv["total"], "amount": inv["total"]}]
+                books.invoices.append(inv)
+            elif doc:
+                books.bills.append(doc[1])
             if cur and cur["lines"]:
                 books.entries.append(cur)
             cur = None
@@ -323,6 +463,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("files", nargs="+", help="Journal report (CSV/XLSX) and/or .IIF files")
     ap.add_argument("--accounts", action="append", default=[], help="Account List / Chart of Accounts export (CSV/XLSX)")
+    ap.add_argument("--customers", action="append", default=[], help="Customer Contact List export (for the Sales module)")
+    ap.add_argument("--invoices", action="append", default=[], help="Invoice List export: Date, Num, Customer, Due Date, Amount, Open Balance (for the Sales module)")
+    ap.add_argument("--bills", action="append", default=[], help="a list of bills: Unpaid Bills or Transaction List by Vendor (for Auto sort's bill tracking)")
     ap.add_argument("--currency", default="CAD", choices=["CAD", "USD"], help="the books' currency (Ledger keeps CAD and USD)")
     ap.add_argument("--date-format", choices=["mdy", "dmy"], help="how 03/04/2026 reads; default: worked out from the file, else mdy")
     ap.add_argument("--source", default="", help='a note kept in the file, e.g. "QuickBooks Online, Acme Inc."')
@@ -338,11 +481,19 @@ def main():
         (read_iif if p.lower().endswith(".iif") else read_journal)(p, books, a.date_format)
         print(f"{p}: {len(books.entries) - before} transactions")
 
+    for p in a.customers:
+        print(f"{p}: {read_customers(p, books)} customers")
+    for p in a.invoices:
+        print(f"{p}: {read_invoices(p, books, a.date_format)} invoices")
+    for p in a.bills:
+        print(f"{p}: {read_bills(p, books, a.date_format)} bills")
+
     accounts = books.finish()
     entries = []
     for e in books.entries:
         memo = e.pop("_memo", "")
         row = e.pop("_row", None)
+        e.pop("_doc", None)
         if not e["description"]:
             e["description"] = memo[:500] or "(no description)"
         total = sum(l.get("debit", 0) - l.get("credit", 0) for l in e["lines"])
@@ -354,11 +505,32 @@ def main():
         entries.append(e)
     entries.sort(key=lambda e: e["date"])
 
-    doc = {"ledger_books": 1, "source": a.source or "QuickBooks: " + ", ".join(a.files), "accounts": accounts, "entries": entries, "review": books.review}
+    # Invoice numbers must be unique in the Sales module.
+    seen = {}
+    for inv in books.invoices:
+        if not inv["number"] or inv["number"].lower() in seen:
+            old = inv["number"]
+            inv["number"] = f'{old or "QB"}-{inv["issue_date"]}-{len(seen) + 1}'
+            books.review.append(f'invoice number {old or "(none)"} ({inv["customer"]}, {inv["issue_date"]}) was missing or used twice; it became {inv["number"]}')
+        seen[inv["number"].lower()] = True
+    modules = {}
+    if books.customers or books.invoices:
+        modules["sales"] = {"customers": list(books.customers.values()), "invoices": books.invoices}
+    if books.bills:
+        ap_code = next((x["code"] for x in accounts if x["type"] == "liability" and re.search(r"payable", x["name"], re.I) and not re.search(r"tax|gst|hst|pst|payroll", x["name"], re.I)), None)
+        for b in books.bills:
+            b["ap_account"] = ap_code
+        modules["categorizer"] = {"bills": books.bills}
+        if not ap_code:
+            books.review.append("no Accounts Payable account was found for the bills; set each bill's \"ap_account\" to its code, or Auto sort can't post their payments")
+    doc = {"ledger_books": 1, "source": a.source or "QuickBooks: " + ", ".join(a.files), "accounts": accounts, "entries": entries, "modules": modules, "review": books.review}
     with open(a.output, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=1, ensure_ascii=False)
 
     print(f"\nwrote {a.output}: {len(accounts)} accounts, {len(entries)} entries" + (f", {entries[0]['date']} to {entries[-1]['date']}" if entries else ""))
+    if modules:
+        s_ = modules.get("sales", {})
+        print("modules: " + ", ".join(x for x in (f'Sales: {len(s_.get("customers", []))} customers, {len(s_.get("invoices", []))} invoices' if s_ else "", f'Auto sort: {len(books.bills)} bills' if books.bills else "") if x))
     by = {t: sum(1 for x in accounts if x["type"] == t) for t in TYPES}
     print("accounts by type: " + ", ".join(f"{n} {t}" for t, n in by.items()))
     if books.review:

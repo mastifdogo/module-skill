@@ -108,6 +108,153 @@ def check_books(doc):
     return accounts, entries
 
 
+MODULES = {"sales": "mod_sales", "categorizer": "mod_categorizer"}  # module id -> its schema
+MODULES_DIR = HERE.parent / "assets" / "modules"
+
+
+def iso(d):
+    try:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(d)):
+            return False
+        date.fromisoformat(d)
+        return True
+    except ValueError:
+        return False
+
+
+def cents_ok(n, positive=False):
+    return isinstance(n, int) and not isinstance(n, bool) and (n > 0 if positive else True) and abs(n) < 10**15
+
+
+def check_modules(doc, account_codes):
+    """Checks the optional "modules" part; returns it cleaned, or stops with the problems."""
+    mods = doc.get("modules") or {}
+    problems = []
+    bad = problems.append
+    for k in mods:
+        if k not in MODULES:
+            bad(f'modules: there is no module "{k}" (known: {", ".join(MODULES)})')
+    out = {}
+    sales = mods.get("sales") or {}
+    if sales.get("customers") or sales.get("invoices"):
+        customers, names = [], {}
+        for i, c in enumerate(sales.get("customers") or [], 1):
+            name = str(c.get("name") or "").strip()[:200]
+            if not name:
+                bad(f"sales customer {i}: name is missing")
+                continue
+            if name.lower() in names:
+                bad(f"sales customer {i}: {name!r} is listed twice")
+            names[name.lower()] = True
+            cur = c.get("currency") or "CAD"
+            if cur not in ("CAD", "USD"):
+                bad(f"sales customer {name!r}: currency must be CAD or USD")
+            terms = c.get("terms_days")
+            if terms is not None and not (isinstance(terms, int) and 0 <= terms <= 365):
+                bad(f"sales customer {name!r}: terms_days must be 0 to 365")
+            customers.append({"name": name, "currency": cur, "terms_days": terms, **{k: str(c.get(k) or "").strip()[:2000] for k in ("company", "email", "phone", "address", "tax_id", "notes")}})
+        invoices, numbers = [], {}
+        for i, v in enumerate(sales.get("invoices") or [], 1):
+            num = str(v.get("number") or "").strip()[:60]
+            at = f"sales invoice {i} ({num})"
+            cust = str(v.get("customer") or "").strip()
+            if not num:
+                bad(f"{at}: number is missing")
+            elif num.lower() in numbers:
+                bad(f"{at}: number is used twice")
+            numbers[num.lower()] = True
+            if cust.lower() not in names:
+                bad(f"{at}: customer {cust!r} is not in the customers list")
+            if not iso(v.get("issue_date")) or not iso(v.get("due_date")) or v["due_date"] < v["issue_date"]:
+                bad(f"{at}: issue_date and due_date must be YYYY-MM-DD, due on or after issue")
+            total, tax, paid = v.get("total"), v.get("tax") or 0, v.get("paid") or 0
+            if not cents_ok(total, True) or not cents_ok(tax) or tax < 0 or not cents_ok(paid) or paid < 0:
+                bad(f"{at}: total (> 0), tax and paid must be whole cents")
+                continue
+            if paid > total:
+                bad(f"{at}: paid is more than the total")
+            if v.get("paid_date") and not iso(v.get("paid_date")):
+                bad(f"{at}: paid_date must be YYYY-MM-DD")
+            if v.get("currency") not in ("CAD", "USD"):
+                bad(f"{at}: currency must be CAD or USD")
+            lines = []
+            for j, l in enumerate(v.get("lines") or [], 1):
+                desc = str(l.get("description") or "").strip()[:1000]
+                qty = l.get("quantity", 1)
+                if not desc or not isinstance(qty, (int, float)) or isinstance(qty, bool) or qty <= 0 or not cents_ok(l.get("unit_price")) or not cents_ok(l.get("amount")):
+                    bad(f"{at} line {j}: needs a description, a quantity above 0, and unit_price and amount in whole cents")
+                    continue
+                lines.append({"description": desc, "quantity": max(1, round(qty * 1000)), "unit_price": l["unit_price"], "amount": l["amount"]})
+            if not lines:
+                bad(f"{at}: needs at least one line")
+            elif sum(l["amount"] for l in lines) + tax != total:
+                bad(f"{at}: its lines ({sum(l['amount'] for l in lines) / 100:.2f}) plus tax ({tax / 100:.2f}) don't add up to the total ({total / 100:.2f})")
+            invoices.append({"number": num, "customer": cust, "issue_date": v.get("issue_date"), "due_date": v.get("due_date"), "currency": v.get("currency"), "total": total, "tax": tax, "paid": paid,
+                             "paid_date": v.get("paid_date"), "po_number": str(v.get("po_number") or "")[:100], "notes": str(v.get("notes") or "")[:2000], "lines": lines})
+        out["sales"] = {"customers": customers, "invoices": invoices}
+    bills_in = (mods.get("categorizer") or {}).get("bills") or []
+    if bills_in:
+        bills = []
+        for i, b in enumerate(bills_in, 1):
+            at = f"bill {i} ({str(b.get('vendor') or '')[:40]} {b.get('invoice_number') or ''})"
+            if not cents_ok(b.get("amount"), True):
+                bad(f"{at}: amount must be whole cents above 0")
+            for k in ("bill_date", "due_date"):
+                if b.get(k) and not iso(b.get(k)):
+                    bad(f"{at}: {k} must be YYYY-MM-DD")
+            if b.get("currency") not in ("CAD", "USD"):
+                bad(f"{at}: currency must be CAD or USD")
+            for k in ("account", "ap_account"):
+                if b.get(k) and b[k] not in account_codes:
+                    bad(f"{at}: {k} {b[k]!r} is not one of the accounts")
+            bills.append({"vendor": str(b.get("vendor") or "").strip()[:200], "invoice_number": str(b.get("invoice_number") or "").strip()[:100], "bill_date": b.get("bill_date") or None,
+                          "due_date": b.get("due_date") or None, "amount": b.get("amount"), "currency": b.get("currency"), "paid": bool(b.get("paid")),
+                          "account": b.get("account") or None, "ap_account": b.get("ap_account") or None, "summary": str(b.get("summary") or "")[:1000]})
+        out["categorizer"] = {"bills": bills}
+    if problems:
+        die("the books file's modules part has problems:\n  - " + "\n  - ".join(problems[:40]))
+    return out
+
+
+def qn(v):
+    """A SQL literal, NULL for None."""
+    return "NULL" if v is None else q(v)
+
+
+def modules_sql(mods):
+    """SQL that fills the modules' own tables (their schemas already exist)."""
+    out = ["BEGIN;"]
+    BY = q("quickbooks-import")
+    s = mods.get("sales")
+    if s:
+        out.append("SET LOCAL search_path = mod_sales;")
+        for c in s["customers"]:
+            out.append(f"INSERT INTO customers (name, company, email, phone, address, tax_id, currency, terms_days, notes) VALUES ({q(c['name'])}, {q(c['company'])}, {q(c['email'])}, {q(c['phone'])}, {q(c['address'])}, {q(c['tax_id'])}, {q(c['currency'])}, {qn(c['terms_days']) if c['terms_days'] is None else c['terms_days']}, {q(c['notes'])});")
+        for v in s["invoices"]:
+            status = "paid" if v["paid"] >= v["total"] else "open"
+            lines = ", ".join(f"({n}, {q(l['description'])}, {l['quantity']}::bigint, {l['unit_price']}::bigint, {l['amount']}::bigint)" for n, l in enumerate(v["lines"], 1))
+            out.append(
+                f"WITH d AS (INSERT INTO documents (kind, number, customer_id, status, issue_date, due_date, currency, po_number, notes, subtotal_cents, tax_cents, total_cents, paid_cents, issued_at, created_by)\n"
+                f"  SELECT 'invoice', {q(v['number'])}, (SELECT id FROM customers WHERE lower(name) = lower({q(v['customer'])}) ORDER BY id LIMIT 1), {q(status)}, {q(v['issue_date'])}, {q(v['due_date'])}, {q(v['currency'])}, {q(v['po_number'])}, {q(v['notes'])},"
+                f" {v['total'] - v['tax']}, {v['tax']}, {v['total']}, {v['paid']}, {q(v['issue_date'])}::date, {BY} RETURNING id),\n"
+                f"l AS (INSERT INTO document_lines (document_id, position, description, quantity, unit_price_cents, amount_cents) SELECT d.id, x.n, x.d, x.q, x.p, x.a FROM d, (VALUES {lines}) AS x(n, d, q, p, a) RETURNING 1)\n"
+                + (f"INSERT INTO payments (document_id, payment_date, amount_cents, method, reference, created_by) SELECT d.id, {q(v['paid_date'] or v['issue_date'])}, {v['paid']}, 'QuickBooks', {q('' if v['paid_date'] else 'payment date not in the QuickBooks export')}, {BY} FROM d;" if v["paid"] > 0 else "SELECT count(*) FROM l;")
+            )
+        # New invoices continue after the highest imported number.
+        out.append("UPDATE settings SET next_invoice_number = greatest(next_invoice_number, 1 + coalesce((SELECT max((substring(number FROM '(\\d{1,9})$'))::bigint) FROM documents WHERE kind = 'invoice' AND number ~ '\\d$'), 0))::int;")
+    b = mods.get("categorizer")
+    if b:
+        out.append("SET LOCAL search_path = mod_categorizer;")
+        for x in b["bills"]:
+            out.append(
+                "INSERT INTO bills (kind, status, vendor, invoice_number, bill_date, due_date, amount_cents, currency, account_code, summary, source, ap_account, paid_at, updated_by) VALUES "
+                f"('bill', {q('paid' if x['paid'] else 'open')}, {q(x['vendor'])}, {q(x['invoice_number'])}, {qn(x['bill_date'])}, {qn(x['due_date'])}, {x['amount']}, {q(x['currency'])}, {qn(x['account'])}, {q(x['summary'] or 'Imported from QuickBooks')}, 'upload', {qn(x['ap_account'])}, "
+                f"{(qn(x['due_date'] or x['bill_date']) + '::date') if x['paid'] and (x['due_date'] or x['bill_date']) else 'NULL'}, {BY});"
+            )
+    out.append("COMMIT;")
+    return "\n".join(out) + "\n"
+
+
 def q(s):
     """A SQL string literal."""
     return "'" + str(s).replace("\x00", "").replace("'", "''") + "'"
@@ -248,7 +395,9 @@ def main():
     ap.add_argument("--check", action="store_true", help="only check books.json and print the summary; build nothing")
     a = ap.parse_args()
 
-    accounts, entries = check_books(json.load(open(a.books, encoding="utf-8")))
+    doc = json.load(open(a.books, encoding="utf-8"))
+    accounts, entries = check_books(doc)
+    mods = check_modules(doc, {x["code"] for x in accounts})
     cents = lambda n: f"{n / 100:,.2f}"
     bal = {x["code"]: 0 for x in accounts}
     for e in entries:
@@ -258,6 +407,12 @@ def main():
     print("closing balances by type (debits positive):")
     for t in TYPES:
         print(f"  {t:<10} {cents(sum(bal[x['code']] for x in accounts if x['type'] == t)):>16}")
+    if "sales" in mods:
+        inv = mods["sales"]["invoices"]
+        print(f"Sales module: {len(mods['sales']['customers'])} customers, {len(inv)} invoices ({sum(1 for v in inv if v['paid'] < v['total'])} unpaid, {cents(sum(v['total'] - v['paid'] for v in inv))} outstanding)")
+    if "categorizer" in mods:
+        bl = mods["categorizer"]["bills"]
+        print(f"Auto sort module: {len(bl)} bills ({sum(1 for x in bl if not x['paid'])} unpaid, {cents(sum(x['amount'] for x in bl if not x['paid']))} owing)")
     if a.check:
         print("books.json is consistent; nothing was built (--check)")
         return
@@ -280,6 +435,19 @@ def main():
         sql.write_text(load_sql(accounts, entries), encoding="utf-8")
         os.chmod(sql, 0o644)
         cluster.psql("ledger", file=sql)
+        if mods:
+            # Each module's own schema, as Ledger's module installer leaves it: its
+            # migrations run with the schema as search_path, and are recorded.
+            cluster.psql("ledger", "CREATE SCHEMA ledger_modules; CREATE TABLE ledger_modules.migrations (module_id text NOT NULL, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (module_id, name));")
+            for mid in mods:
+                schema = MODULES[mid]
+                cluster.psql("ledger", f"CREATE SCHEMA {schema};")
+                for m in sorted((MODULES_DIR / mid / "migrations").glob("[0-9]*.sql")):
+                    cluster.psql("ledger", f"BEGIN;\nSET LOCAL search_path = {schema};\n" + m.read_text(encoding="utf-8") + f"\n;\nINSERT INTO ledger_modules.migrations (module_id, name) VALUES ({q(mid)}, {q(m.name)});\nCOMMIT;\n")
+            msql = work / "modules.sql"
+            msql.write_text(modules_sql(mods), encoding="utf-8")
+            os.chmod(msql, 0o644)
+            cluster.psql("ledger", file=msql)
         n_acc, n_ent, n_lines, total = cluster.psql("ledger", "SELECT (SELECT count(*) FROM accounts), (SELECT count(*) FROM journal_entries), (SELECT count(*) FROM transactions), (SELECT coalesce(sum(amount), 0) FROM transactions);", capture=True).strip().split("|")
         if int(n_acc) != len(accounts) or int(n_ent) != len(entries) or int(total) != 0:
             die(f"the database holds {n_acc} accounts and {n_ent} entries (sum {total}), not what the books file has")
@@ -291,6 +459,8 @@ def main():
         shutil.copyfile(tmp_dump, a.output)
         version = (DB_DIR / "LEDGER_VERSION").read_text().strip()
         print(f"\nwrote {a.output} ({os.path.getsize(a.output):,} bytes): {n_acc} accounts, {n_ent} entries, {n_lines} lines, all balanced")
+        for mid in mods:
+            print(f"includes the {'Sales' if mid == 'sales' else 'Auto sort'} module's data (module {mid} {(MODULES_DIR / mid / 'MODULE_VERSION').read_text().strip()} or later must be installed in Ledger)")
         print(f"made with PostgreSQL {a.pg_version} and Ledger {version}'s schema: restore it in Ledger {version} or later")
     except RuntimeError as e:
         die(str(e))
