@@ -121,7 +121,7 @@ feature the module uses (the context file says which version added what;
   (`links: [{ ref, label, href }]` on `createJournalEntry`, or
   `ctx.ledger.linkJournalEntry`; Ledger ≥ 0.11.2) and find a record's
   entries with `ctx.ledger.linkedEntries(ref)`.
-- Any LLM provider can be behind `ctx.llm` (Ledger ≥ 0.19.0: Anthropic,
+- Any LLM provider can be behind `ctx.llm` (Ledger ≥ 0.18.2: Anthropic,
   OpenAI, Gemini, OpenRouter, Mistral, Groq, Ollama, any OpenAI-compatible
   server). Stay provider-neutral: never branch on `status().provider` or a
   model name, keep provider and model names out of prompts, UI text and
