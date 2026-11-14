@@ -29,7 +29,8 @@ If the user just tags or runs this skill and says nothing else, the job is:
    module against it and against the rules in this skill: newer `ctx`
    features it should use (for example the shared entity list instead of
    its own customer or vendor table, account tags, sub-accounts,
-   `ctx.storage`, `ctx.imports`), things Ledger now does differently, and
+   `ctx.storage`, `ctx.imports`, and the PDF store `ctx.documents` for
+   every PDF the module receives, makes or reads), things Ledger now does differently, and
    anything the checker reports.
 3. Make those changes, raise `"ledger"` in the manifest to the oldest
    Ledger version that has everything the module now uses, and bump the
@@ -85,11 +86,12 @@ feature the module uses (the context file says which version added what;
   `secret` settings fields). Binary (`bytea`) columns show only their size
   in that CSV (Ledger ≥ 0.13.1), so keep a file's name, type, size and dates
   in readable columns beside its bytes.
-- Documents the module keeps (generated PDFs, scans, attachments) go in
-  `ctx.storage` (Ledger ≥ 0.13.2): `put(path, buffer)`, `get`, `list`,
-  `remove`, `url(path)` for links/iframes. Files sit on the data share per
-  organization and module and every backup folder carries them under
-  `files/<module>/`. Prefer it over `bytea` columns.
+- Files the module keeps that are **not** PDFs (CSV exports, spreadsheets,
+  other attachments) go in `ctx.storage` (Ledger ≥ 0.13.2): `put(path,
+  buffer)`, `get`, `list`, `remove`, `url(path)` for links/iframes. Files
+  sit on the data share per organization and module and every backup folder
+  carries them under `files/<module>/`. Prefer it over `bytea` columns.
+  PDFs never go here: they go in the PDF store, `ctx.documents` (below).
 - **Restores** (Ledger 0.14.0): each organization backs up and restores its
   own books. A restore replaces the module's tables and its `ctx.storage`
   files with the backup's (a restore from an uploaded dump file, 0.14.2,
@@ -111,14 +113,28 @@ feature the module uses (the context file says which version added what;
   user presses Import. Return `{ summary, errors }`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
-- PDFs of receipts, statements and invoices live in Ledger's Documents
-  store, `ctx.documents` (Ledger ≥ 0.19.0): read them from there
-  (`list({ kind, unmarked: true })`, `read(id)`, then `mark(id)`), and put
-  PDFs the module makes for people to keep there (`add({ kind, filename,
-  data, … }, req.user)`, origin "created"). Statements carry their bank or
-  card account (`account_code`, Ledger ≥ 0.19.1): set it when known, filter
-  by it (`list({ kind: "statement", account_code })`), never guess it. No separate upload box for
-  these and no only-copy in `ctx.storage`.
+- **PDFs go in Ledger's PDF store, `ctx.documents` (Ledger ≥ 0.19.0). Always.**
+  Every PDF a module takes in or produces is filed there, not anywhere else:
+  - A PDF the module **receives** (uploaded in its page, fetched from mail,
+    downloaded from a bank or supplier): `ctx.documents.add({ kind,
+    filename, data, origin: "imported", ... }, req.user)`.
+  - A PDF the module **makes** (an invoice, a statement of account, a
+    report): `ctx.documents.add({ ..., origin: "created" }, req.user)`.
+  - A PDF the module **needs** (a receipt, statement or invoice to read):
+    take it from the store with `list({ kind, unmarked: true })` and
+    `read(id)`, then `mark(id)` when done. Link to it in the module's page
+    with `ctx.documents.url(id)`.
+  Keep only the document's `id` in the module's tables. Do **not** store
+  PDFs in `ctx.storage`, in `bytea` columns, in `ctx.files`, or behind an
+  upload box of the module's own that bypasses the store; if the module
+  offers an upload, it files the PDF with `add` and works from the returned
+  id. The same goes for PNG and JPEG scans of receipts, statements and
+  invoices. A statement carries its bank or card account (`account_code`,
+  Ledger ≥ 0.19.1): set it when the module knows it, filter by it, never
+  guess it. `add` answers 409 when the file is already in the store: use
+  the document it names instead of failing. An older module that keeps PDFs
+  elsewhere is moved over: a migration or one-off job files each existing
+  PDF with `add` and stores the id.
 - Mail goes through `ctx.mail` (Ledger ≥ 0.18.3): whichever mailbox the
   admin connected, an IMAP/SMTP account (Proton Mail Bridge or any other)
   under Settings → Mail, else Gmail. Search with fields
