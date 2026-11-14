@@ -56,7 +56,7 @@ repository.
   (`scripts/check.sh` in this skill does this for you).
 - Read **`<ledger>/docs/MODULE_LLM_CONTEXT.md`** in full before writing
   anything: manifest, `ctx` API and return shapes, `ctx.settings`,
-  `ctx.dashboard`, `ctx.llm`, `ctx.mail`, `ctx.gmail`, `ctx.search`, `ctx.files`,
+  `ctx.dashboard`, `ctx.llm`, `ctx.documents`, `ctx.mail`, `ctx.gmail`, `ctx.search`, `ctx.files`,
   `ctx.storage`, `ctx.imports`, `ctx.entities`, `ctx.orgs`, roles, migrations, UI and security rules.
 - Then follow **`<ledger>/.claude/skills/ledger-module/SKILL.md`** (design,
   implementation rules, checks, publishing). Where the docs and Ledger's code
@@ -111,6 +111,12 @@ feature the module uses (the context file says which version added what;
   user presses Import. Return `{ summary, errors }`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
+- PDFs of receipts, statements and invoices live in Ledger's Documents
+  store, `ctx.documents` (Ledger ≥ 0.19.0): read them from there
+  (`list({ kind, unmarked: true })`, `read(id)`, then `mark(id)`), and put
+  PDFs the module makes for people to keep there (`add({ kind, filename,
+  data, … }, req.user)`, origin "created"). No separate upload box for
+  these and no only-copy in `ctx.storage`.
 - Mail goes through `ctx.mail` (Ledger ≥ 0.18.3): whichever mailbox the
   admin connected, an IMAP/SMTP account (Proton Mail Bridge or any other)
   under Settings → Mail, else Gmail. Search with fields
