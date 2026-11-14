@@ -119,7 +119,7 @@ feature the module uses (the context file says which version added what;
   Gmail-only features (labels, threads, its search syntax).
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
   no API keys, OAuth, IMAP or Apps Script bridges of the module's own for
-  those. An admin allows the module under Settings → LLM API / Gmail.
+  those. An admin allows the module under Settings → LLM API / Mail (Gmail is on the Mail tab since Ledger 0.18.4).
   Pictures go in `images: [{ media_type, data }]` (Ledger ≥ 0.11.2) and
   reach the LLM connection set up for images (often a different model than
   for text); check `ctx.llm.status().images.configured`.
