@@ -74,9 +74,12 @@ feature the module uses (the context file says which version added what;
 
 - No npm packages at runtime: Ledger installs the release as-is. Only
   `node:*` built-ins, global `fetch`, and the module's own files.
-- Ledger runs in a Debian 12 container (the only template its releases
-  build; no Ubuntu): don't spawn programs that aren't in it or rely on
-  Ubuntu-specific paths or packages.
+- Ledger runs in a Debian container (no Ubuntu): Debian 13 with PostgreSQL
+  18 on servers set up from Ledger 0.18.0 (the only template its releases
+  build), Debian 12 on older ones, whose database the updater moves to
+  PostgreSQL 18 but which may still be on 15 or 16. Write for both: SQL that
+  PostgreSQL 15 accepts, and don't spawn programs that aren't in the
+  container or rely on Ubuntu-specific paths or packages.
 - Never edit a released migration; add the next `NNN_name.sql`.
 - Backups save each module table as a readable CSV in each backup's folder (next to the dump) (Ledger ≥
   0.13.0): clear table and column names, and no secrets in tables (use
