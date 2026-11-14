@@ -111,7 +111,7 @@ feature the module uses (the context file says which version added what;
   user presses Import. Return `{ summary, errors }`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
-- Mail goes through `ctx.mail` (Ledger ≥ 0.19.0): whichever mailbox the
+- Mail goes through `ctx.mail` (Ledger ≥ 0.18.3): whichever mailbox the
   admin connected, an IMAP/SMTP account (Proton Mail Bridge or any other)
   under Settings → Mail, else Gmail. Search with fields
   (`{ from, subject, text, since, before, max }`), not Gmail query syntax;
