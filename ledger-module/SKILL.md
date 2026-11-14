@@ -115,7 +115,9 @@ feature the module uses (the context file says which version added what;
   store, `ctx.documents` (Ledger ≥ 0.19.0): read them from there
   (`list({ kind, unmarked: true })`, `read(id)`, then `mark(id)`), and put
   PDFs the module makes for people to keep there (`add({ kind, filename,
-  data, … }, req.user)`, origin "created"). No separate upload box for
+  data, … }, req.user)`, origin "created"). Statements carry their bank or
+  card account (`account_code`, Ledger ≥ 0.19.1): set it when known, filter
+  by it (`list({ kind: "statement", account_code })`), never guess it. No separate upload box for
   these and no only-copy in `ctx.storage`.
 - Mail goes through `ctx.mail` (Ledger ≥ 0.18.3): whichever mailbox the
   admin connected, an IMAP/SMTP account (Proton Mail Bridge or any other)
