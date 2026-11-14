@@ -56,7 +56,7 @@ repository.
   (`scripts/check.sh` in this skill does this for you).
 - Read **`<ledger>/docs/MODULE_LLM_CONTEXT.md`** in full before writing
   anything: manifest, `ctx` API and return shapes, `ctx.settings`,
-  `ctx.dashboard`, `ctx.llm`, `ctx.gmail`, `ctx.search`, `ctx.files`,
+  `ctx.dashboard`, `ctx.llm`, `ctx.mail`, `ctx.gmail`, `ctx.search`, `ctx.files`,
   `ctx.storage`, `ctx.imports`, `ctx.entities`, `ctx.orgs`, roles, migrations, UI and security rules.
 - Then follow **`<ledger>/.claude/skills/ledger-module/SKILL.md`** (design,
   implementation rules, checks, publishing). Where the docs and Ledger's code
@@ -111,6 +111,12 @@ feature the module uses (the context file says which version added what;
   user presses Import. Return `{ summary, errors }`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
+- Mail goes through `ctx.mail` (Ledger ≥ 0.19.0): whichever mailbox the
+  admin connected, an IMAP/SMTP account (Proton Mail Bridge or any other)
+  under Settings → Mail, else Gmail. Search with fields
+  (`{ from, subject, text, since, before, max }`), not Gmail query syntax;
+  ids are opaque and can answer 404 later. Use `ctx.gmail` only for
+  Gmail-only features (labels, threads, its search syntax).
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
   no API keys, OAuth, IMAP or Apps Script bridges of the module's own for
   those. An admin allows the module under Settings → LLM API / Gmail.
