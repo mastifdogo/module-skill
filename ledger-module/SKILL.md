@@ -217,7 +217,11 @@ feature the module uses (the context file says which version added what;
   user's current one, so no organization columns. Background jobs that touch
   the books loop over `ctx.orgs.forEach`, or they only see the main books.
 - Configuration goes in the manifest's `settings.fields` (Ledger draws the
-  form under Settings → <module>); secrets as `secret` fields. Each
+  form under Settings → <module>); secrets as `secret` fields. A module
+  with many settings or distinct groups splits that page into its own tabs
+  with `settings.tabs` (Ledger ≥ 0.19.6: `[{ id, label, help?, page? }]`,
+  fields join one with `"tab": "<id>"`, a tab's `page` is a file in `ui/`);
+  don't build a tab strip of your own inside a settings page. Each
   organization has its own values (Ledger ≥ 0.11.1): call
   `ctx.settings.get()` where they're used instead of caching one copy.
 - Bad input answers 4xx (`throw new ctx.HttpError(422, "…")`), never 500.
