@@ -144,7 +144,9 @@ feature the module uses (the context file says which version added what;
   id. The same goes for PNG and JPEG scans of receipts, statements and
   invoices. A statement carries its bank or card account (`account_code`,
   Ledger ≥ 0.19.1): set it when the module knows it, filter by it, never
-  guess it. `add` answers 409 when the file is already in the store: use
+  guess it. A statement reads `reconciled: true` once an account has
+  been reconciled against it (Ledger ≥ 0.19.4); ask for the ones still to do with
+  `list({ kind: "statement", reconciled: false })`. `add` answers 409 when the file is already in the store: use
   the document it names instead of failing. An older module that keeps PDFs
   elsewhere is moved over: a migration or one-off job files each existing
   PDF with `add` and stores the id.
