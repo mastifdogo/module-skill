@@ -113,6 +113,11 @@ feature the module uses (the context file says which version added what;
   user presses Import. Return `{ summary, errors }`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
+- **Entry amounts can change** (Ledger ≥ 0.19.5): a person can correct the
+  amounts of a posted entry (logged; the entry reads `amended: true`). Don't
+  assume an entry the module posted still has the amounts it posted: read
+  them from the entry (`ctx.ledger.linkedEntries(ref)`), and show any
+  difference from the module's own record instead of overwriting either.
 - **Account codes can change** (Ledger ≥ 0.19.3): people can renumber
   accounts. Ledger rewrites the old code in a module's tables and settings
   only where it can recognise one: text columns named `account_code`,
