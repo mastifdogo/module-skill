@@ -113,6 +113,13 @@ feature the module uses (the context file says which version added what;
   user presses Import. Return `{ summary, errors }`.
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`.
+- **A tidy settings page** (Ledger ≥ 0.19.8): every account the module asks
+  for is a `"type": "account"` field (a picker; add `currency` and
+  `account_types`), never a text box for a code. Group fields with
+  `"type": "heading"` fields and tabs, and hide what doesn't apply with
+  `show_if` (mail-server details only when "own server" is chosen, accounts
+  only when posting is on). Labels are two or three words; the heading or
+  tab says what they are for. No repeated help under every field.
 - **Entry amounts can change** (Ledger ≥ 0.19.5): a person can correct the
   amounts of a posted entry (logged; the entry reads `amended: true`). Don't
   assume an entry the module posted still has the amounts it posted: read
