@@ -150,6 +150,12 @@ feature the module uses (the context file says which version added what;
   hard-coded one. Each entry still balances, and whatever goes in must have
   something that clears it: the Accounts page shows clearing accounts that
   aren't at zero. Other modules' are in `ctx.ledger.clearingAccounts()`.
+  Since Ledger 0.20.1 clearing accounts are hidden from the Accounts page
+  and account dropdowns unless a person shows them (Settings → Clearing
+  accounts; `hidden` on the account), so a module's own pickers should
+  leave hidden accounts out too, and its settings shouldn't ask a person to
+  pick its clearing account. Ledger's own Unreconciled account has
+  `module_id` "ledger" (a reserved module id): never post to it.
 - **A tidy settings page** (Ledger ≥ 0.19.8): every account the module asks
   for is a `"type": "account"` field (a picker; add `currency` and
   `account_types`), never a text box for a code. Group fields with
