@@ -167,14 +167,14 @@ feature the module uses (the context file says which version added what;
   bank account's unticked lines to Ledger's Unreconciled clearing account
   until a person moves them on. Read dates and accounts from the entry, not
   from the module's copy.
-- **Root mode** (Ledger ≥ 0.21.0, wider in 0.22.0): an admin in root mode
+- **Root mode** (Ledger ≥ 0.21.0, wider in 0.21.1): an admin in root mode
   can delete any account, entry, line or user and move a line to any
   account; entries may be unbalanced until root mode is left, and anything
   can be reversed later (the same ids come back). Treat a missing account,
   entry or user as gone for now; don't fail or delete the module's own
   records because of it.
-- **Root can do the same to the module's records** (Ledger ≥ 0.22.0; set
-  `"ledger": ">=0.22.0"`). `req.user.root` is true while the person asking
+- **Root can do the same to the module's records** (Ledger ≥ 0.21.1; set
+  `"ledger": ">=0.21.1"`). `req.user.root` is true while the person asking
   has root mode on. When it is, let them delete or change ANY record of the
   module, including ones the module normally protects (sent, paid, posted),
   and do it only through Ledger, never with the module's own DELETE or
