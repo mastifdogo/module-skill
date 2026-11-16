@@ -162,6 +162,36 @@ feature the module uses (the context file says which version added what;
   assume an entry the module posted still has the amounts it posted: read
   them from the entry (`ctx.ledger.linkedEntries(ref)`), and show any
   difference from the module's own record instead of overwriting either.
+- **Dates and accounts of a posted line can change too** (Ledger ≥ 0.20.2):
+  a person can change an entry's date, and a finished reconciliation moves a
+  bank account's unticked lines to Ledger's Unreconciled clearing account
+  until a person moves them on. Read dates and accounts from the entry, not
+  from the module's copy.
+- **Root mode** (Ledger ≥ 0.21.0, wider in 0.22.0): an admin in root mode
+  can delete any account, entry, line or user and move a line to any
+  account; entries may be unbalanced until root mode is left, and anything
+  can be reversed later (the same ids come back). Treat a missing account,
+  entry or user as gone for now; don't fail or delete the module's own
+  records because of it.
+- **Root can do the same to the module's records** (Ledger ≥ 0.22.0; set
+  `"ledger": ">=0.22.0"`). `req.user.root` is true while the person asking
+  has root mode on. When it is, let them delete or change ANY record of the
+  module, including ones the module normally protects (sent, paid, posted),
+  and do it only through Ledger, never with the module's own DELETE or
+  UPDATE:
+  `await ctx.root.remove(req, table, id, "Sales: deleted invoice 12")` and
+  `await ctx.root.update(req, table, id, { column: value }, summary)`. They
+  work on one row of one of the module's own tables with an `id` column,
+  answer 403 without root, log the action under Settings → Root log, and
+  Ledger puts the row back when the action or the whole root session is
+  reversed (the module does nothing for that). Remove rows that hang off a
+  row first, one by one (cascaded rows are not kept). Don't post or reverse
+  journal entries on a root delete: the admin deletes those themselves.
+  Register `ctx.root.onCheck(async () => [...])`: it returns plain
+  sentences for records that are truly broken ("invoice 12 is sent but has
+  no lines"), `[]` when all is sound; root mode can't be left until it does.
+  Show root controls only when the server says the user is in root mode,
+  marked "Root" in red.
 - **Account codes can change** (Ledger ≥ 0.19.3): people can renumber
   accounts. Ledger rewrites the old code in a module's tables and settings
   only where it can recognise one: text columns named `account_code`,
