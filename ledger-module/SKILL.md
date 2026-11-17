@@ -173,6 +173,26 @@ feature the module uses (the context file says which version added what;
   bank account's unticked lines to Ledger's Unreconciled clearing account
   until a person moves them on. Read dates and accounts from the entry, not
   from the module's copy.
+- **One tag system for every module** (Ledger ≥ 0.23.0; set
+  `"ledger": ">=0.23.0"`). Whether an entry is paid, billed or overdue, and
+  which customer or vendor it is with, is said with Ledger's shared tags,
+  never only in the module's own tables and never with entry links:
+  `await ctx.tags.set(entryId, "billed", { note }, req.user)`,
+  `ctx.tags.set(entryId, "customer", { entity_id })` ("customer" and
+  "vendor" need the entity), `ctx.tags.set(entryId, "paid")` (takes
+  "overdue" off), `ctx.tags.remove(entryId, tag)`, `ctx.tags.of(entryId)`,
+  `ctx.tags.entries({ tag, entity_id, from, to, limit })`. The standard
+  tags mean the same everywhere: billed = charged to a customer, paid =
+  paid in full, overdue = past due, customer / vendor = who it is with.
+  Tag the entry other modules would look at (the invoice's or bill's entry,
+  not the payment's) when posting it, and keep it true as things change.
+  A tag belongs to the entry, not to the module that set it: another module
+  or a person can set or remove it, so register
+  `ctx.tags.onChange((c) => …)` with `c = { entry_id, action: "set" |
+  "removed", tag, entity_id, module_id }` (skip `c.module_id === ctx.id`)
+  and bring the module's own record in line, e.g. an invoice whose entry
+  gets "paid" becomes paid, and open again if "paid" is taken off. Other
+  tags are lowercase words; choose ones another module could use.
 - **Root mode** (Ledger ≥ 0.21.0, wider in 0.21.1): an admin in root mode
   can delete any account, entry, line or user and move a line to any
   account; entries may be unbalanced until root mode is left, and anything
